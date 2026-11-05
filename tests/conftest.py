@@ -1,4 +1,5 @@
 import os
+import time
 import sys
 import tempfile
 from pathlib import Path
@@ -7,6 +8,7 @@ from pathlib import Path
 _TMP = tempfile.mkdtemp(prefix="gd-test-")
 os.environ["DATA_DIR"] = _TMP
 os.environ.setdefault("TZ", "America/Chicago")
+time.tzset()
 os.environ["ALLOWED_HOSTS"] = "testserver,garmin.example.net"
 os.environ["ALLOWED_ORIGINS"] = "https://garmin.example.net"
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

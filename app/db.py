@@ -178,8 +178,12 @@ class Database:
             row = con.execute("SELECT MAX(start_local) FROM activities").fetchone()
         return row[0][:10] if row and row[0] else None
 
-    def weekly(self, since: str, type_like: str = "%run%") -> list[dict]:
-        """Totals per week (weeks start Monday) for activities whose type matches."""
+    def weekly(self, since: str, kind: str = "run") -> list[dict]:
+        """Totals per week (weeks start Monday) for runs or rides."""
+        if kind == "ride":
+            where = "(lower(type) LIKE '%cycl%' OR lower(type) LIKE '%bik%' OR lower(type) LIKE '%ride%')"
+        else:
+            where = "lower(type) LIKE '%run%'"
         with self.connect() as con:
             rows = con.execute(
                 """
@@ -189,10 +193,10 @@ class Database:
                        SUM(COALESCE(distance_m,0)) AS distance_m,
                        SUM(COALESCE(duration_s,0)) AS duration_s
                 FROM activities
-                WHERE substr(start_local,1,10) >= ? AND lower(type) LIKE ?
+                WHERE substr(start_local,1,10) >= ? AND """ + where + """
                 GROUP BY week ORDER BY week
                 """,
-                (since, type_like),
+                (since,),
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -238,6 +242,20 @@ class Database:
         with self.connect() as con:
             con.execute("DELETE FROM meta WHERE k=?", (k,))
 
+    # ---- wiping (Settings → Data) --------------------------------------------
+    def wipe_garmin_data(self) -> None:
+        with self.connect() as con:
+            for table in ("daily", "training", "activities", "raw", "sync_log"):
+                con.execute(f"DELETE FROM {table}")
+            con.execute("DELETE FROM meta WHERE k IN ('backfilled', 'connect_backfilled')")
+
+    def wipe_everything_else(self) -> None:
+        with self.connect() as con:
+            con.execute("DELETE FROM meta")
+            con.execute("DELETE FROM sessions")
+        with self.connect() as con:
+            con.execute("VACUUM")
+
     # ---- sessions ----------------------------------------------------------
     def session_add(self, token_hash: str, created: int, expires: int) -> None:
         with self.connect() as con:
@@ -252,6 +270,10 @@ class Database:
     def session_delete(self, token_hash: str) -> None:
         with self.connect() as con:
             con.execute("DELETE FROM sessions WHERE token_hash=?", (token_hash,))
+
+    def session_delete_all_except(self, keep_hash: str) -> int:
+        with self.connect() as con:
+            return con.execute("DELETE FROM sessions WHERE token_hash != ?", (keep_hash,)).rowcount
 
     def session_delete_all(self) -> int:
         with self.connect() as con:

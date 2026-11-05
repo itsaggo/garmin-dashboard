@@ -69,6 +69,10 @@ class Settings:
         return self.secrets_dir / "dashboard-password"
 
     @property
+    def account_file(self) -> Path:
+        return self.secrets_dir / "dashboard-account.json"
+
+    @property
     def token_cache(self) -> Path:
         return self.secrets_dir / "personal-api-bearer-token.json"
 

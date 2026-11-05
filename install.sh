@@ -109,11 +109,8 @@ URL="http://${IP:-<your-server-ip>}:$PORT"
 echo
 STATUS="$(docker exec "$NAME" python -m app.setup status 2>&1 || true)"
 printf '%s\n' "$STATUS"
-if printf '%s' "$STATUS" | grep -q -e "✗ dashboard password" -e "✗ Garmin Personal API key"; then
-  say "Almost done. Run the setup to add your password and Garmin key:"
-  echo "    docker exec -it $NAME python -m app.setup"
-  echo
-  echo "Then open $URL"
+if printf '%s' "$STATUS" | grep -q -e "✗ dashboard account"; then
+  say "Almost done. Open $URL to create your login and finish setup in the browser."
 else
   say "Running. Open $URL"
 fi

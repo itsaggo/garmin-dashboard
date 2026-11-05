@@ -1,12 +1,12 @@
-"""Interactive setup. Run inside the container:
+"""Terminal fallback. Normal setup happens in the browser; use these only if you're locked out
+or prefer the terminal:
 
-    docker exec -it garmin-dashboard python -m app.setup            # guided: does whatever isn't done yet
-    docker exec -it garmin-dashboard python -m app.setup password   # change the dashboard password
-    docker exec -it garmin-dashboard python -m app.setup api-key    # save / replace the Personal API key
-    docker exec -it garmin-dashboard python -m app.setup connect    # sign in to Garmin Connect (VO2 max etc.)
-    docker exec -it garmin-dashboard python -m app.setup disconnect # remove the Garmin Connect sign-in
-    docker exec -it garmin-dashboard python -m app.setup logout-all # sign out every browser
     docker exec -it garmin-dashboard python -m app.setup status
+    docker exec -it garmin-dashboard python -m app.setup reset-password   # forgot your password
+    docker exec -it garmin-dashboard python -m app.setup logout-all       # sign out every browser
+    docker exec -it garmin-dashboard python -m app.setup api-key          # save / replace the Personal API key
+    docker exec -it garmin-dashboard python -m app.setup connect          # sign in to Garmin Connect
+    docker exec -it garmin-dashboard python -m app.setup disconnect       # remove the Garmin Connect sign-in
 
 Secrets are typed at hidden prompts and saved as 0600 files in the data folder.
 Your Garmin password is used once to sign in and is never saved.
@@ -14,38 +14,15 @@ Your Garmin password is used once to sign in and is never saved.
 from __future__ import annotations
 
 import getpass
-import shutil
 import sys
-from contextlib import contextmanager
 
-from . import auth, config
+from . import auth, config, garmin_login
 from .db import Database
 
 
 def _ask_yes(question: str, default: bool = True) -> bool:
-    hint = "Y/n" if default else "y/N"
-    answer = input(f"{question} [{hint}] ").strip().lower()
+    answer = input(f"{question} [{'Y/n' if default else 'y/N'}] ").strip().lower()
     return default if not answer else answer.startswith("y")
-
-
-def _first_line(e: BaseException) -> str:
-    lines = str(e).strip().splitlines()
-    return lines[0] if lines else type(e).__name__
-
-
-@contextmanager
-def _sync_paused(s: config.Settings):
-    """Hold the sync lock while changing Garmin Connect tokens, so a running sync
-    can't read or re-save them halfway through."""
-    from .sync import data_lock
-
-    with data_lock(s) as held:
-        if held:
-            yield
-            return
-    print("  Waiting for the current sync to finish…")
-    with data_lock(s, blocking=True):
-        yield
 
 
 def _request_sync(s: config.Settings) -> None:
@@ -55,20 +32,32 @@ def _request_sync(s: config.Settings) -> None:
         pass
 
 
-def cmd_password(s: config.Settings) -> None:
-    print(f"\nChoose a dashboard password (at least {auth.MIN_PASSWORD_LENGTH} characters; a passphrase is ideal).")
+def _new_password() -> str:
     while True:
         pw = getpass.getpass("New password: ")
-        if len(pw) < auth.MIN_PASSWORD_LENGTH:
-            print(f"  Too short, use at least {auth.MIN_PASSWORD_LENGTH} characters.")
+        problem = auth.password_problem(pw)
+        if problem:
+            print(f"  {problem}")
             continue
         if pw != getpass.getpass("Repeat password: "):
             print("  Passwords didn't match, try again.")
             continue
-        break
-    auth.set_password(s, pw)
+        return pw
+
+
+def cmd_reset_password(s: config.Settings) -> None:
+    name = auth.current_username(s)
+    if name is None:
+        print("No account exists yet. Open the dashboard in a browser to create one.")
+        return
+    print(f"\nResetting the password for '{name}'.")
+    new_name = input(f"Username [{name}]: ").strip() or name
+    if auth.username_problem(new_name):
+        print(f"  {auth.username_problem(new_name)}")
+        return
+    auth.set_password(s, _new_password(), username=new_name)
     removed = Database(s.db_path).session_delete_all()
-    print("  ✓ Password saved." + (f" Signed out {removed} existing session(s)." if removed else ""))
+    print("  ✓ Password saved." + (f" Signed out {removed} session(s)." if removed else ""))
 
 
 def cmd_api_key(s: config.Settings) -> None:
@@ -101,75 +90,33 @@ def cmd_api_key(s: config.Settings) -> None:
 
 
 def cmd_connect(s: config.Settings) -> None:
-    from garminconnect import Garmin, GarminConnectAuthenticationError, GarminConnectTooManyRequestsError
-
     print("\nGarmin Connect sign-in (adds VO2 max, training status, training readiness, recovery time).")
-    print("This uses the community 'garminconnect' library, not Garmin's official API:")
-    print("  • it only reads data, and your password is used once here and never saved")
-    print("  • a sign-in token is saved instead (good for months); Garmin may change things and break it")
-    if not _ask_yes("Continue?"):
-        return
+    print("Uses the community 'garminconnect' library; your password is used once and never saved.")
     email = input("Garmin email: ").strip()
     password = getpass.getpass("Garmin password: ")
-
-    def prompt_mfa() -> str:
-        return input("Two-factor code from Garmin (email/app): ").strip()
-
-    # Sign in into a staging folder so a failed attempt never removes a working sign-in.
-    staging = s.secrets_dir / "garminconnect.new"
-    if staging.exists():
-        shutil.rmtree(staging)
-    config.ensure_private_dir(staging)
-    client = Garmin(email=email, password=password, prompt_mfa=prompt_mfa)
-    del password
+    db = Database(s.db_path)
     print("  Signing in…")
     try:
-        client.login(tokenstore=str(staging))
-    except GarminConnectTooManyRequestsError:
-        print("  ✗ Garmin is limiting sign-in attempts. Wait 15–30 minutes and try again.")
-        shutil.rmtree(staging, ignore_errors=True)
+        pending = garmin_login.start(s, db, email, password)
+        del password
+        while pending:
+            code = input("Two-factor code from Garmin (email/app): ").strip()
+            try:
+                garmin_login.finish(s, db, pending, code)
+                pending = None
+            except garmin_login.LoginError as e:
+                print(f"  ✗ {e}")
+                if "Start" in str(e):  # expired or out of tries
+                    return
+    except garmin_login.LoginError as e:
+        print(f"  ✗ {e}")
         return
-    except GarminConnectAuthenticationError as e:
-        print(f"  ✗ Sign-in failed: {_first_line(e)}")
-        shutil.rmtree(staging, ignore_errors=True)
-        return
-    except Exception as e:
-        print(f"  ✗ Sign-in failed: {type(e).__name__}: {_first_line(e)}")
-        shutil.rmtree(staging, ignore_errors=True)
-        return
-    finally:
-        client.password = None
-    staged_file = staging / s.connect_token_file.name
-    if not staged_file.is_file():
-        shutil.rmtree(staging, ignore_errors=True)
-        print("  ✗ Signed in, but no token file was written. Nothing was changed.")
-        return
-    with _sync_paused(s):
-        # Swap in the new sign-in; the old one is only deleted once the new one is in place.
-        old = s.secrets_dir / "garminconnect.old"
-        if old.exists():
-            shutil.rmtree(old)
-        if s.connect_token_dir.exists():
-            s.connect_token_dir.rename(old)
-        try:
-            staging.rename(s.connect_token_dir)
-        except OSError as e:
-            if old.exists() and not s.connect_token_dir.exists():
-                old.rename(s.connect_token_dir)  # put the previous sign-in back
-            print(f"  ✗ Couldn't save the new sign-in ({_first_line(e)}). Your previous sign-in was kept.")
-            shutil.rmtree(staging, ignore_errors=True)
-            return
-        shutil.rmtree(old, ignore_errors=True)
-    db = Database(s.db_path)
-    db.delete_meta("connect_backfilled")  # pull history on the next sync
-    print("  ✓ Connected. VO2 max and training data will appear after the next sync (within a minute).")
+    print("  ✓ Connected. Training data will appear after the next sync (within a minute).")
     _request_sync(s)
 
 
 def cmd_disconnect(s: config.Settings) -> None:
-    if s.connect_token_dir.exists():
-        with _sync_paused(s):
-            shutil.rmtree(s.connect_token_dir)
+    if garmin_login.disconnect(s):
         print("  ✓ Garmin Connect sign-in removed. (Stored training history is kept.)")
     else:
         print("  Garmin Connect isn't connected.")
@@ -182,44 +129,36 @@ def cmd_logout_all(s: config.Settings) -> None:
 
 def cmd_status(s: config.Settings) -> None:
     mark = lambda ok: "✓" if ok else "✗"  # noqa: E731
-    print(f"  {mark(auth.password_configured(s))} dashboard password")
+    name = auth.current_username(s)
+    print(f"  {mark(bool(name))} dashboard account" + (f" ({name})" if name else " (create it in the browser)"))
     print(f"  {mark(bool(s.api_key()))} Garmin Personal API key")
     print(f"  {mark(s.connect_configured())} Garmin Connect sign-in (optional: VO2 max, training status, recovery)")
 
 
-def guided(s: config.Settings) -> None:
-    print("Garmin Dashboard setup")
-    cmd_status(s)
-    if not auth.password_configured(s):
-        cmd_password(s)
-    if not s.api_key():
-        cmd_api_key(s)
-    if not s.connect_configured() and _ask_yes(
-        "\nAlso connect Garmin Connect for VO2 max, training status and recovery time?", default=True
-    ):
-        cmd_connect(s)
-    print("\nDone. Current setup:")
-    cmd_status(s)
-    print("Open the dashboard in your browser and sign in with your dashboard password.")
-
-
 COMMANDS = {
-    "password": cmd_password, "api-key": cmd_api_key, "connect": cmd_connect,
-    "disconnect": cmd_disconnect, "logout-all": cmd_logout_all, "status": cmd_status,
+    "status": cmd_status, "reset-password": cmd_reset_password, "logout-all": cmd_logout_all,
+    "api-key": cmd_api_key, "connect": cmd_connect, "disconnect": cmd_disconnect,
 }
+INTERACTIVE = {"reset-password", "api-key", "connect"}
 
 
 def main() -> None:
     config.drop_root("app.setup")
     s = config.load()
     args = sys.argv[1:]
-    if args and args[0] not in COMMANDS:
+    if not args:
+        print("Setup now happens in your browser: open the dashboard's WebUI.\n")
+        cmd_status(s)
+        print("\nTerminal commands (if you're locked out):")
+        print("  " + "\n  ".join(f"python -m app.setup {c}" for c in COMMANDS))
+        return
+    if args[0] not in COMMANDS:
         print(__doc__)
         sys.exit(2)
-    if not sys.stdin.isatty() and (not args or args[0] in ("password", "api-key", "connect")):
-        sys.exit("This needs an interactive terminal: use  docker exec -it garmin-dashboard python -m app.setup")
+    if args[0] in INTERACTIVE and not sys.stdin.isatty():
+        sys.exit("This needs an interactive terminal: use  docker exec -it garmin-dashboard python -m app.setup " + args[0])
     try:
-        COMMANDS[args[0]](s) if args else guided(s)
+        COMMANDS[args[0]](s)
     except (KeyboardInterrupt, EOFError):
         print("\nCancelled. Nothing more was changed.")
         sys.exit(1)

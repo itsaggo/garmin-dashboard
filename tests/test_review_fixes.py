@@ -9,16 +9,13 @@ from fastapi.testclient import TestClient
 from app import auth, main, sync
 from app.db import Database
 
-ORIGIN = {"Origin": "http://testserver"}
-PASSWORD = "correct horse battery staple"
+from tests.helpers import ORIGIN, PASSWORD, USER, make_account, reset
 
 
 @pytest.fixture()
 def client():
-    main.settings.password_file.unlink(missing_ok=True)
-    main.db.session_delete_all()
-    main.limiter = auth.LoginLimiter()
-    auth.set_password(main.settings, PASSWORD)
+    reset()
+    make_account()
     return TestClient(main.app, follow_redirects=False)
 
 
@@ -44,12 +41,12 @@ def test_global_limit_across_many_ips():
 def test_wrong_logins_in_waves_still_capped_at_five(client, monkeypatch):
     """Waves small enough that the hashing cap never kicks in: only the limiter can stop them."""
     hashed = []
-    real = auth.check_password
-    monkeypatch.setattr(auth, "check_password", lambda st, pw: (hashed.append(1), real(st, pw))[1])
+    real = auth.check_login
+    monkeypatch.setattr(auth, "check_login", lambda st, u, pw: (hashed.append(1), real(st, u, pw))[1])
 
     def attempt(_):
         c = TestClient(main.app, follow_redirects=False)
-        return c.post("/login", data={"password": "wrong"}, headers=ORIGIN).headers["location"]
+        return c.post("/login", data={"username": USER, "password": "wrong"}, headers=ORIGIN).headers["location"]
 
     results = []
     for _ in range(10):
@@ -61,7 +58,7 @@ def test_wrong_logins_in_waves_still_capped_at_five(client, monkeypatch):
 def test_burst_of_wrong_logins(client):
     def attempt(_):
         c = TestClient(main.app, follow_redirects=False)
-        return c.post("/login", data={"password": "wrong"}, headers=ORIGIN).headers["location"]
+        return c.post("/login", data={"username": USER, "password": "wrong"}, headers=ORIGIN).headers["location"]
 
     with ThreadPoolExecutor(30) as pool:
         results = list(pool.map(attempt, range(30)))
@@ -71,29 +68,29 @@ def test_burst_of_wrong_logins(client):
 
 def test_hashing_concurrency_capped(client, monkeypatch):
     running, peak, lock = [0], [0], threading.Lock()
-    real = auth.check_password
+    real = auth.check_login
 
-    def slow(settings, pw):
+    def slow(settings, u, pw):
         with lock:
             running[0] += 1
             peak[0] = max(peak[0], running[0])
         time.sleep(0.2)
         with lock:
             running[0] -= 1
-        return real(settings, pw)
+        return real(settings, u, pw)
 
-    monkeypatch.setattr(auth, "check_password", slow)
+    monkeypatch.setattr(auth, "check_login", slow)
     main.limiter = auth.LoginLimiter(per_ip=100, total=100)
     with ThreadPoolExecutor(12) as pool:
         list(pool.map(lambda _: TestClient(main.app, follow_redirects=False).post(
-            "/login", data={"password": "x"}, headers=ORIGIN), range(12)))
+            "/login", data={"username": USER, "password": "x"}, headers=ORIGIN), range(12)))
     assert peak[0] <= 2
 
 
 def test_successful_login_does_not_use_up_the_limit(client):
     for _ in range(25):
         c = TestClient(main.app, follow_redirects=False)
-        assert c.post("/login", data={"password": PASSWORD}, headers=ORIGIN).headers["location"] == "/"
+        assert c.post("/login", data={"username": USER, "password": PASSWORD}, headers=ORIGIN).headers["location"] == "/"
 
 
 @pytest.mark.parametrize("host,ok", [
@@ -108,11 +105,11 @@ def test_host_allowlist(client, host, ok):
 
 def test_reverse_proxy_origin_allowed_only_if_listed(client):
     # proxy rewrites Host to the container IP; browser Origin is the proxy's public address
-    r = client.post("/login", data={"password": PASSWORD},
+    r = client.post("/login", data={"username": USER, "password": PASSWORD},
                     headers={"Host": "10.0.0.5:8099", "Origin": "https://garmin.example.net"})
     assert r.status_code == 303 and r.headers["location"] == "/"
     for bad in ("https://other.example.net", "http://garmin.example.net", "https://garmin.example.net:8443", "null"):
-        r = client.post("/login", data={"password": PASSWORD}, headers={"Host": "10.0.0.5:8099", "Origin": bad})
+        r = client.post("/login", data={"username": USER, "password": PASSWORD}, headers={"Host": "10.0.0.5:8099", "Origin": bad})
         assert r.status_code == 403, bad
 
 

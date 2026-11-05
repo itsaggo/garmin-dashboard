@@ -1,5 +1,5 @@
 /* Garmin dashboard front-end. No build step: plain JS + Chart.js. */
-const state = { days: 90, units: "imperial", status: null, daily: [], training: [], weekly: [], acts: [] };
+const state = { days: 90, units: "imperial", status: null, daily: [], training: [], weekly: [], rides: [], acts: [], coach: null };
 const charts = {};
 
 const $ = (sel) => document.querySelector(sel);
@@ -26,23 +26,42 @@ const U = {
 async function api(path, opts = {}) {
   const r = await fetch(path, { credentials: "same-origin", ...opts });
   if (r.status === 401) { window.location.href = "/login"; throw new Error("Signed out"); }
-  if (!r.ok) throw new Error(`${path}: ${r.status}`);
+  if (!r.ok) {
+    let detail = "";
+    try { detail = (await r.json()).detail || ""; } catch { /* no JSON body */ }
+    throw new Error(typeof detail === "string" && detail ? detail : `${path}: ${r.status}`);
+  }
   return r.json();
+}
+const postJson = (path, body) => api(path, {
+  method: "POST", body: JSON.stringify(body || {}),
+  headers: { "X-Requested-With": "dashboard", "Content-Type": "application/json" },
+});
+function applyTheme(theme) {
+  const root = document.documentElement;
+  if (theme === "light" || theme === "dark") root.setAttribute("data-theme", theme);
+  else root.removeAttribute("data-theme");
+  try { localStorage.setItem("gd-theme", theme || "auto"); } catch { /* ignore */ }
 }
 
 /* ---------------------------------------------------------------- loading */
 async function load() {
   const weeks = Math.max(8, Math.min(52, Math.ceil(state.days / 7)));
-  const [status, daily, training, weekly, acts] = await Promise.all([
+  const [status, daily, training, weekly, rides, acts, coach] = await Promise.all([
     api("/api/status"),
     api(`/api/daily?days=${state.days}`),
     api(`/api/training?days=${Math.max(state.days, 90)}`),
     api(`/api/weekly?weeks=${weeks}&type=run`),
+    api(`/api/weekly?weeks=${weeks}&type=ride`),
     api("/api/activities?limit=15"),
+    api("/api/coach"),
   ]);
-  Object.assign(state, { status, daily, training, weekly, acts, units: status.units });
+  Object.assign(state, { status, daily, training, weekly, rides, acts, coach, units: status.units });
+  applyTheme(status.theme);
   $("#weeklyNote").textContent = `Last ${weeks} weeks · Monday-start weeks · ${U.distLabel()}`;
+  $("#ridesNote").textContent = `Last ${weeks} weeks · ${U.distLabel()}`;
   renderHeader();
+  renderCoach();
   renderTiles();
   renderTraining();
   renderCharts();
@@ -64,13 +83,68 @@ function renderHeader() {
   $("#connectCredit").textContent = s.connect_configured ? " + Garmin Connect (unofficial)" : "";
 
   const banners = [];
-  if (!s.api_key_configured) banners.push(`<div class="banner warn"><strong>No Garmin Personal API key yet.</strong> In the Unraid terminal run <code>docker exec -it garmin-dashboard python -m app.setup api-key</code></div>`);
+  if (!s.api_key_configured) banners.push(`<div class="banner warn"><strong>No Garmin Personal API key yet.</strong> Add it under <a href="/settings">Settings → Garmin connections</a>.</div>`);
   if (ls && ls.status !== "ok" && ls.status !== "running" && ls.status !== "setup" && ls.message) banners.push(`<div class="banner warn"><strong>Last sync: ${escapeHtml(ls.status)}.</strong> ${escapeHtml(String(ls.message).slice(0, 700))}</div>`);
-  if (s.race && s.race.date) {
-    const days = Math.ceil((new Date(s.race.date + "T07:00:00") - new Date()) / 86400000);
-    if (days >= 0) banners.push(`<div class="banner"><strong>${escapeHtml(s.race.name || "Race day")}</strong> — ${days === 0 ? "today. Good luck!" : `${days} day${days === 1 ? "" : "s"} to go`} (${new Date(s.race.date + "T12:00:00").toDateString()})</div>`);
-  }
   $("#banners").innerHTML = banners.join("");
+}
+
+/* ---------------------------------------------------------------- coach */
+const CALL_CLASS = { rest: "bad", easy: "warn", normal: "neutral", hard_ok: "good", race: "good" };
+const list = (items) => items.length ? `<ul class="reasons">${items.map((r) => `<li>${escapeHtml(r)}</li>`).join("")}</ul>` : "";
+
+function renderCoach() {
+  const c = state.coach;
+  if (!c) return;
+  const cards = [];
+  const t = c.today;
+  cards.push(`<div class="card coach-card">
+    <div class="label">Today</div>
+    <h3><span class="call ${CALL_CLASS[t.call] || "neutral"}">${escapeHtml(t.title)}</span></h3>
+    ${list(t.reasons)}
+    <p>${escapeHtml(t.advice)}</p>
+    ${c.data_days < 21 ? `<p class="note">Still learning your normal: comparisons get better after about 3 weeks of data.</p>` : ""}
+  </div>`);
+  const r = c.race;
+  if (r) {
+    const when = r.days_to_go === 0 ? "today" : r.days_to_go > 0 ? `${r.days_to_go} day${r.days_to_go === 1 ? "" : "s"} to go` : "finished";
+    cards.push(`<div class="card coach-card">
+      <div class="label">Goal race</div>
+      <h3>${escapeHtml(r.name)} <span class="muted-tag">${escapeHtml(when)}</span></h3>
+      <div class="race-stats">
+        ${r.goal ? `<div><div class="label">Goal</div><div class="big">${escapeHtml(r.goal)}</div><div class="detail">${escapeHtml(r.goal_pace || "")}</div></div>` : ""}
+        ${r.estimate ? `<div><div class="label">Current estimate</div><div class="big">${escapeHtml(r.estimate)}</div><div class="detail">from recent runs</div></div>` : ""}
+        <div><div class="label">Phase</div><div class="big">${escapeHtml(r.phase)}</div><div class="detail">${escapeHtml(r.distance || "")}</div></div>
+      </div>
+      ${list(r.lines)}
+      <p>${escapeHtml(r.advice)}</p>
+    </div>`);
+  } else {
+    cards.push(`<div class="card coach-card"><div class="label">Goal race</div>
+      <p>Set a goal race and time in <a href="/settings">Settings</a> to get pace targets, a fitness estimate and taper reminders.</p></div>`);
+  }
+  const w = c.week;
+  cards.push(`<div class="card coach-card">
+    <div class="label">Weekly check-in · week of ${escapeHtml(shortDate(w.week_of))}</div>
+    ${list(w.lines)}
+    <p><strong>${escapeHtml(w.suggestion)}</strong></p>
+  </div>`);
+  $("#coachCards").innerHTML = cards.join("");
+  $("#coachDisclaimer").textContent = c.disclaimer;
+  $("#aiBox").hidden = !state.status.ai_enabled;
+}
+
+async function askAi(question) {
+  const out = $("#aiOut"), btns = [$("#aiNote"), $("#aiAsk")];
+  btns.forEach((b) => (b.disabled = true));
+  out.hidden = false;
+  out.textContent = "Your coach is thinking… (a local model can take a minute)";
+  try {
+    const res = await postJson("/api/coach/ai", question ? { question } : {});
+    out.textContent = res.text;  // plain text only, never HTML
+    $("#aiMeta").textContent = `${res.model} · ${res.generated}${res.question ? " · you asked: " + res.question : ""}`;
+  } catch (e) {
+    out.textContent = e.message;
+  } finally { btns.forEach((b) => (b.disabled = false)); }
 }
 
 /* ---------------------------------------------------------------- tiles */
@@ -118,6 +192,12 @@ function renderTiles() {
   const cur = thisWeek && thisWeek.week === mondayIso ? thisWeek : null;
   t.push(tile("Run distance", fmt(cur ? U.dist(cur.distance_m) : 0, 1), U.distLabel(),
     `this week · ${cur ? cur.count : 0} run${cur && cur.count === 1 ? "" : "s"}`));
+  if (state.status.include_cycling) {
+    const rw = state.rides.length ? state.rides[state.rides.length - 1] : null;
+    const rcur = rw && rw.week === mondayIso ? rw : null;
+    t.push(tile("Ride distance", fmt(rcur ? U.dist(rcur.distance_m) : 0, 1), U.distLabel(),
+      `this week · ${rcur ? rcur.count : 0} ride${rcur && rcur.count === 1 ? "" : "s"}`));
+  }
 
   $("#tiles").innerHTML = t.join("");
 }
@@ -240,6 +320,20 @@ function renderCharts() {
     } } } }),
   });
 
+  // Weekly cycling distance
+  $("#ridesCard").hidden = !state.status.include_cycling;
+  if (state.status.include_cycling) {
+    const rw = state.rides;
+    draw("cRides", {
+      type: "bar",
+      data: { labels: rw.map((w) => shortDate(w.week)), datasets: [{ label: `Distance (${U.distLabel()})`, data: rw.map((w) => +U.dist(w.distance_m).toFixed(1)), ...bar(css("--s3")) }] },
+      options: baseOptions({ plugins: { ...baseOptions().plugins, tooltip: { ...baseOptions().plugins.tooltip, callbacks: {
+        title: (items) => `Week of ${items[0].label}`,
+        afterBody: (items) => { const w = rw[items[0].dataIndex]; return `${w.count} ride${w.count === 1 ? "" : "s"} · ${hm(w.duration_s)} h`; },
+      } } } }),
+    });
+  }
+
   // Steps
   draw("cSteps", {
     type: "bar",
@@ -356,6 +450,13 @@ $("#syncBtn").addEventListener("click", async () => {
   }, 3000);
 });
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { renderCharts(); renderTraining(); });
+
+$("#aiNote").addEventListener("click", () => askAi(null));
+$("#aiAsk").addEventListener("click", () => {
+  const q = $("#aiQuestion").value.trim();
+  if (q) askAi(q);
+});
+$("#aiQuestion").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("#aiAsk").click(); } });
 
 (function init() {
   try { const saved = +localStorage.getItem("gd-days"); if ([30, 90, 180, 365].includes(saved)) state.days = saved; } catch {}

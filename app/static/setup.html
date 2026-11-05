@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Set up your dashboard</title>
+  <script src="/static/theme.js"></script>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="/static/favicon.svg">
+</head>
+<body>
+<main class="wizard">
+  <header class="wizard-head">
+    <img src="/static/favicon.svg" alt="" width="40" height="40">
+    <div>
+      <h1>Set up your dashboard</h1>
+      <div class="sub">A few quick steps. You can change any of this later in Settings.</div>
+    </div>
+  </header>
+  <div class="dots" id="stepDots" aria-hidden="true"></div>
+  <p class="msg" id="pageMsg"></p>
+
+  <!-- Step 1: Personal API key -->
+  <section class="card step" data-title="Garmin data">
+    <h2>1. Connect your Garmin data <span class="pill" id="keyStatus"></span></h2>
+    <p>This is Garmin's official way to share your steps, sleep, heart rate, HRV, Body Battery, stress and activities.</p>
+    <ol class="how">
+      <li>Open <a href="https://connect.garmin.com/app/settings/personalApiToken" target="_blank" rel="noopener noreferrer">Garmin Connect → Personal API</a> and sign in.</li>
+      <li>Choose <strong>Create Key</strong>, accept the terms, and pick <strong>1 year</strong>.</li>
+      <li>Copy the key (Garmin shows it only once) and paste it here.</li>
+    </ol>
+    <form method="post" class="stack">
+      <label for="keyInput">Personal API key</label>
+      <input id="keyInput" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your key">
+      <div class="row">
+        <button type="button" class="btn primary" id="keySave" data-primary>Save &amp; check key</button>
+      </div>
+      <p class="msg" id="keyMsg"></p>
+    </form>
+    <div class="nav">
+      <span></span>
+      <button type="button" class="btn" data-next>Next →</button>
+    </div>
+  </section>
+
+  <!-- Step 2: Garmin Connect (optional) -->
+  <section class="card step" data-title="Training metrics" hidden>
+    <h2>2. Training metrics <span class="muted-tag">optional</span> <span class="pill" id="connectStatus"></span></h2>
+    <p>Adds VO2 max, training status, training readiness and recovery time, which Garmin's official API doesn't include.
+      It signs in the way the Garmin Connect website does, using a community library.</p>
+    <ul class="how">
+      <li>Your password is used once to sign in and is <strong>never saved</strong>. Only Garmin's sign-in token is kept.</li>
+      <li>If you use two-factor sign-in, you'll be asked for the code next.</li>
+      <li>It only reads data. Every few months Garmin may ask you to sign in again.</li>
+    </ul>
+    <form method="post" class="stack" id="connectForm">
+      <label for="cEmail">Garmin email</label>
+      <input id="cEmail" type="email" autocomplete="off" spellcheck="false">
+      <label for="cPassword">Garmin password</label>
+      <input id="cPassword" type="password" autocomplete="off">
+      <div class="row"><button type="button" class="btn primary" id="connectBtn" data-primary>Sign in to Garmin</button></div>
+    </form>
+    <form method="post" class="stack" id="mfaForm" hidden>
+      <label for="mfaCode">Two-factor code</label>
+      <input id="mfaCode" inputmode="numeric" autocomplete="one-time-code" maxlength="10">
+      <div class="row"><button type="button" class="btn primary" id="mfaBtn" data-primary>Verify code</button></div>
+    </form>
+    <p class="msg" id="connectMsg"></p>
+    <div class="nav">
+      <button type="button" class="btn" data-prev>← Back</button>
+      <button type="button" class="btn" data-next>Next →</button>
+    </div>
+  </section>
+
+  <!-- Step 3: preferences -->
+  <section class="card step" data-title="Preferences" hidden>
+    <h2>3. Your preferences</h2>
+    <form method="post" id="prefsForm" class="grid-form">
+      <div class="fieldset">
+        <h3>Display</h3>
+        <label>Units
+          <select name="units"><option value="imperial">Miles, feet</option><option value="metric">Kilometers, meters</option></select>
+        </label>
+        <label>Time zone
+          <input name="timezone" list="tzList" spellcheck="false" placeholder="America/Chicago">
+        </label>
+        <datalist id="tzList"></datalist>
+        <label>Theme
+          <select name="theme"><option value="auto">Match my device</option><option value="light">Light</option><option value="dark">Dark</option></select>
+        </label>
+        <label class="check"><input type="checkbox" name="include_cycling"> Show cycling too</label>
+      </div>
+      <div class="fieldset">
+        <h3>Goal race <span class="muted-tag">optional, powers the coach</span></h3>
+        <label>Race name <input name="race_name" maxlength="80" placeholder="New Orleans Half"></label>
+        <label>Race date <input name="race_date" type="date"></label>
+        <label>Distance
+          <select name="race_distance">
+            <option value="5k">5K</option><option value="10k">10K</option><option value="half">Half marathon</option>
+            <option value="marathon">Marathon</option><option value="custom">Other…</option>
+          </select>
+        </label>
+        <label id="customKmRow" hidden>Distance in km <input name="race_custom_km" type="number" min="0.4" max="500" step="0.01"></label>
+        <label>Goal time <input name="race_goal_time" placeholder="2:05:00" pattern="\d{1,2}:[0-5]\d:[0-5]\d" title="hours:minutes:seconds"></label>
+      </div>
+    </form>
+    <p class="msg" id="prefsMsg"></p>
+    <div class="nav">
+      <button type="button" class="btn" data-prev>← Back</button>
+      <button type="button" class="btn primary" id="prefsNext">Save &amp; continue →</button>
+    </div>
+  </section>
+
+  <!-- Step 4: done -->
+  <section class="card step" data-title="Done" hidden>
+    <h2>4. All set</h2>
+    <p>Your first sync pulls up to a year of history and takes a few minutes. Charts fill in as data arrives.</p>
+    <p>Want a coach that writes notes in plain English? Connect a local AI model (Ollama) any time under
+      <strong>Settings → AI coach</strong>.</p>
+    <div class="nav">
+      <button type="button" class="btn" data-prev>← Back</button>
+      <button type="button" class="btn primary" id="finishBtn">Go to my dashboard</button>
+    </div>
+  </section>
+</main>
+<script src="/static/common.js"></script>
+<script src="/static/settings.js"></script>
+</body>
+</html>

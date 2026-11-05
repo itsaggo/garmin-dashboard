@@ -16,26 +16,48 @@ def d(offset):
     return (TODAY - timedelta(days=offset)).isoformat()
 
 
-class FakeGarmin:
-    """Mimics the parts of garminconnect.Garmin the dashboard uses."""
-    calls: list = []
-    mode = "ok"  # ok | auth_expired | rate_limited_once | bad_range
+class _FakeInnerClient:
+    """garminconnect.Garmin().client: holds tokens and can dump them like the real one."""
 
-    def __init__(self, email=None, password=None, prompt_mfa=None, retry_attempts=3, **kw):
-        self.email, self.password, self.prompt_mfa = email, password, prompt_mfa
+    def __init__(self):
+        self.di_token = None
+
+    def dump(self, path):
+        from pathlib import Path
+        p = Path(path) / "garmin_tokens.json"
+        p.write_text('{"di_token": "%s"}' % self.di_token)
+        p.chmod(0o600)
+
+
+class FakeGarmin:
+    """Mimics the parts of garminconnect.Garmin the dashboard uses (incl. return_on_mfa)."""
+    calls: list = []
+    mode = "ok"  # ok | auth_expired | rate_limited_once | bad_range | mfa
+    instances: list = []
+
+    def __init__(self, email=None, password=None, prompt_mfa=None, return_on_mfa=False, retry_attempts=3, **kw):
+        self.email, self.password, self.return_on_mfa = email, password, return_on_mfa
+        self.client = _FakeInnerClient()
         self._rate_hit = False
+        FakeGarmin.instances.append(self)
 
     def login(self, tokenstore=None):
         FakeGarmin.calls.append(("login", tokenstore))
         if FakeGarmin.mode == "auth_expired":
             raise garminconnect.GarminConnectAuthenticationError("Username and password are required")
-        if self.email:  # credential login from setup: write a token file like the real library
-            if self.prompt_mfa:
-                assert self.prompt_mfa() == "123456"
-            from pathlib import Path
-            p = Path(tokenstore) / "garmin_tokens.json"
-            p.write_text('{"di_token": "fresh"}')
-            p.chmod(0o600)
+        if self.email:  # credential sign-in from setup
+            if self.password != "right-password":
+                raise garminconnect.GarminConnectAuthenticationError("401 Unauthorized")
+            if FakeGarmin.mode == "mfa":
+                return "needs_mfa", {"cookies": "pending"}
+            self.client.di_token = "fresh"
+        return None, None
+
+    def resume_login(self, state, code):
+        FakeGarmin.calls.append(("resume", code))
+        if code != "123456":
+            raise garminconnect.GarminConnectAuthenticationError("bad code")
+        self.client.di_token = "fresh"
         return None, None
 
     def get_max_metrics_range(self, start, end):
@@ -67,7 +89,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("CONNECT_BACKFILL_DAYS", "10")
     monkeypatch.setattr(garminconnect, "Garmin", FakeGarmin)
     monkeypatch.setattr(connect.time, "sleep", lambda s: None)
-    FakeGarmin.calls, FakeGarmin.mode = [], "ok"
+    FakeGarmin.calls, FakeGarmin.mode, FakeGarmin.instances = [], "ok", []
     s = config.load()
     config.ensure_private_dir(s.connect_token_dir)
     s.connect_token_file.write_text('{"di_token": "t"}')
@@ -119,61 +141,82 @@ def test_connect_expired_login_reported_and_personal_sync_unaffected(env):
     assert result["status"] == "partial" and "app.setup connect" in result["message"]
 
 
-def test_setup_connect_uses_staging_and_never_saves_password(env, monkeypatch):
+def _answers(monkeypatch, inputs, password):
+    it = iter(inputs)
+    monkeypatch.setattr(builtins, "input", lambda prompt="": next(it))
+    monkeypatch.setattr(getpass, "getpass", lambda prompt="": password)
+
+
+def test_connect_signin_never_saves_password(env, monkeypatch):
     s, db = env
     old = s.connect_token_file.read_text()
-    answers = iter(["y", "me@example.com"])
-    monkeypatch.setattr(builtins, "input", lambda prompt="": "123456" if "code" in prompt else next(answers))
-    monkeypatch.setattr(getpass, "getpass", lambda prompt="": "s3cret-password")
+    _answers(monkeypatch, ["me@example.com"], "right-password")
     setup.cmd_connect(s)
-    assert s.connect_token_file.is_file()
-    assert not (s.secrets_dir / "garminconnect.new").exists()
-    for f in s.data_dir.rglob("*"):
-        if f.is_file():
-            assert b"s3cret-password" not in f.read_bytes(), f
     assert old != '{"di_token": "fresh"}'
     assert s.connect_token_file.read_text() == '{"di_token": "fresh"}'  # new sign-in swapped in
+    assert not list(s.secrets_dir.glob("garminconnect.new*")) and not (s.secrets_dir / "garminconnect.old").exists()
+    for f in s.data_dir.rglob("*"):
+        if f.is_file():
+            assert b"right-password" not in f.read_bytes(), f
+    assert all(g.password is None for g in FakeGarmin.instances if g.email)  # dropped from memory too
     import stat
     assert stat.S_IMODE(s.connect_token_dir.stat().st_mode) == 0o700
 
 
-def test_setup_connect_failure_keeps_old_login(env, monkeypatch):
+def test_connect_two_factor_with_one_wrong_code(env, monkeypatch):
+    s, db = env
+    FakeGarmin.mode = "mfa"
+    _answers(monkeypatch, ["me@example.com", "000000", "123456"], "right-password")
+    setup.cmd_connect(s)
+    assert s.connect_token_file.read_text() == '{"di_token": "fresh"}'
+    assert [c for c in FakeGarmin.calls if c[0] == "resume"] == [("resume", "000000"), ("resume", "123456")]
+
+
+def test_connect_two_factor_gives_up_after_three_wrong_codes(env, monkeypatch):
     s, db = env
     old = s.connect_token_file.read_text()
-    FakeGarmin.mode = "auth_expired"
-    answers = iter(["y", "me@example.com"])
-    monkeypatch.setattr(builtins, "input", lambda prompt="": next(answers))
-    monkeypatch.setattr(getpass, "getpass", lambda prompt="": "wrong")
+    FakeGarmin.mode = "mfa"
+    _answers(monkeypatch, ["me@example.com", "1111", "2222", "3333"], "right-password")
+    setup.cmd_connect(s)
+    assert s.connect_token_file.read_text() == old
+    assert not list(s.secrets_dir.glob("garminconnect.new*"))
+
+
+def test_connect_failure_keeps_old_login(env, monkeypatch):
+    s, db = env
+    old = s.connect_token_file.read_text()
+    _answers(monkeypatch, ["me@example.com"], "wrong")
     setup.cmd_connect(s)
     assert s.connect_token_file.read_text() == old  # previous working sign-in untouched
-    assert not (s.secrets_dir / "garminconnect.new").exists()
+    assert not list(s.secrets_dir.glob("garminconnect.new*"))
 
 
-def test_setup_password_rules(env, monkeypatch):
-    s, db = env
-    pw = iter(["short", "long enough password", "mismatch-mismatch", "long enough password", "long enough password"])
-    monkeypatch.setattr(getpass, "getpass", lambda prompt="": next(pw))
-    setup.cmd_password(s)
-    from app import auth
-    assert auth.check_password(s, "long enough password")
-
-
-def test_setup_connect_rename_failure_restores_old_login(env, monkeypatch):
+def test_connect_rename_failure_restores_old_login(env, monkeypatch):
     from pathlib import Path
     s, db = env
     old = s.connect_token_file.read_text()
-    answers = iter(["y", "me@example.com"])
-    monkeypatch.setattr(builtins, "input", lambda prompt="": "123456" if "code" in prompt else next(answers))
-    monkeypatch.setattr(getpass, "getpass", lambda prompt="": "pw")
+    _answers(monkeypatch, ["me@example.com"], "right-password")
     real_rename = Path.rename
 
     def flaky(self, target):
-        if self.name == "garminconnect.new":
+        if self.name.startswith("garminconnect.new"):
             raise OSError("disk full")
         return real_rename(self, target)
 
     monkeypatch.setattr(Path, "rename", flaky)
     setup.cmd_connect(s)
     assert s.connect_token_file.read_text() == old  # previous sign-in put back
-    assert not (s.secrets_dir / "garminconnect.new").exists()
+    assert not list(s.secrets_dir.glob("garminconnect.new*"))
     assert not (s.secrets_dir / "garminconnect.old").exists()
+
+
+def test_reset_password(env, monkeypatch):
+    from app import auth
+    s, db = env
+    assert auth.create_account(s, "adam", "first password here")
+    pw = iter(["short", "long enough password", "mismatch-mismatch", "long enough password", "long enough password"])
+    monkeypatch.setattr(getpass, "getpass", lambda prompt="": next(pw))
+    monkeypatch.setattr(builtins, "input", lambda prompt="": "")  # keep the username
+    setup.cmd_reset_password(s)
+    assert auth.check_login(s, "adam", "long enough password")
+    assert not auth.check_login(s, "adam", "first password here")

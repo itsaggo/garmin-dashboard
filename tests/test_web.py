@@ -4,35 +4,25 @@ from fastapi.testclient import TestClient
 
 from app import auth, main
 
-ORIGIN = {"Origin": "http://testserver"}
-PASSWORD = "correct horse battery staple"
+from tests.helpers import JSON, ORIGIN, PASSWORD, USER, client as _client, login, make_account, reset
 
 
 @pytest.fixture()
 def client():
-    # Fresh state for each test: no password, no sessions, empty limiter.
-    main.settings.password_file.unlink(missing_ok=True)
-    main.db.session_delete_all()
-    main.limiter = auth.LoginLimiter()
-    main._last_manual_sync = 0.0
-    return TestClient(main.app, follow_redirects=False)
+    reset()
+    return _client()
 
 
-def login(c):
-    r = c.post("/login", data={"password": PASSWORD}, headers=ORIGIN)
-    assert r.status_code == 303 and r.headers["location"] == "/"
-    return r
-
-
-def test_setup_required_before_password(client):
+def test_first_visit_goes_to_account_creation(client):
     r = client.get("/")
-    assert r.status_code == 503 and "app.setup" in r.text
+    assert r.status_code == 303 and r.headers["location"] == "/welcome"
     assert client.get("/api/daily").status_code == 503
+    assert client.get("/welcome").status_code == 200
     assert client.get("/healthz").json() == {"ok": True}
 
 
 def test_everything_requires_login(client):
-    auth.set_password(main.settings, PASSWORD)
+    make_account()
     for path in ("/", "/raw", "/static/app.js", "/static/index.html"):
         r = client.get(path)
         assert r.status_code == 303 and r.headers["location"] == "/login", path
@@ -44,11 +34,14 @@ def test_everything_requires_login(client):
 
 
 def test_login_cookie_flags_and_logout(client):
-    auth.set_password(main.settings, PASSWORD)
+    make_account()
     r = login(client)
     cookie = r.headers["set-cookie"].lower()
     assert "httponly" in cookie and "samesite=strict" in cookie and "path=/" in cookie
     assert client.get("/api/status").status_code == 200
+    r = client.get("/")
+    assert r.status_code == 303 and r.headers["location"] == "/setup"  # wizard until setup is finished
+    assert client.post("/api/setup/done", headers=JSON).json() == {"ok": True}
     assert client.get("/").status_code == 200
     r = client.post("/logout", headers=ORIGIN)
     assert r.status_code == 303
@@ -56,7 +49,7 @@ def test_login_cookie_flags_and_logout(client):
 
 
 def test_stolen_cookie_dies_on_logout(client):
-    auth.set_password(main.settings, PASSWORD)
+    make_account()
     login(client)
     token = client.cookies.get(auth.SESSION_COOKIE)
     client.post("/logout", headers=ORIGIN)
@@ -66,7 +59,7 @@ def test_stolen_cookie_dies_on_logout(client):
 
 
 def test_bogus_cookie_rejected(client):
-    auth.set_password(main.settings, PASSWORD)
+    make_account()
     client.cookies.set(auth.SESSION_COOKIE, "x" * 43)
     assert client.get("/api/status").status_code == 401
     client.cookies.set(auth.SESSION_COOKIE, "x" * 5000)
@@ -74,20 +67,20 @@ def test_bogus_cookie_rejected(client):
 
 
 def test_wrong_password_then_lockout(client):
-    auth.set_password(main.settings, PASSWORD)
+    make_account()
     for _ in range(5):
-        r = client.post("/login", data={"password": "nope"}, headers=ORIGIN)
+        r = client.post("/login", data={"username": USER, "password": "nope"}, headers=ORIGIN)
         assert r.headers["location"] == "/login?m=bad"
     # 6th attempt is refused even with the right password
-    r = client.post("/login", data={"password": PASSWORD}, headers=ORIGIN)
+    r = client.post("/login", data={"username": USER, "password": PASSWORD}, headers=ORIGIN)
     assert r.headers["location"] == "/login?m=locked"
     assert auth.SESSION_COOKIE not in client.cookies
 
 
 def test_cross_site_posts_blocked(client):
-    auth.set_password(main.settings, PASSWORD)
-    assert client.post("/login", data={"password": PASSWORD}).status_code == 403  # no Origin at all
-    r = client.post("/login", data={"password": PASSWORD}, headers={"Origin": "http://evil.example"})
+    make_account()
+    assert client.post("/login", data={"username": USER, "password": PASSWORD}).status_code == 403  # no Origin at all
+    r = client.post("/login", data={"username": USER, "password": PASSWORD}, headers={"Origin": "http://evil.example"})
     assert r.status_code == 403
     login(client)
     assert client.post("/logout", headers={"Origin": "http://evil.example"}).status_code == 403
@@ -95,7 +88,7 @@ def test_cross_site_posts_blocked(client):
 
 
 def test_sync_needs_custom_header(client):
-    auth.set_password(main.settings, PASSWORD)
+    make_account()
     login(client)
     assert client.post("/api/sync", headers=ORIGIN).status_code == 403
     r = client.post("/api/sync", headers={**ORIGIN, "X-Requested-With": "dashboard"})
@@ -103,14 +96,14 @@ def test_sync_needs_custom_header(client):
 
 
 def test_other_methods_rejected(client):
-    auth.set_password(main.settings, PASSWORD)
+    make_account()
     login(client)
     for method in ("PUT", "DELETE", "PATCH", "OPTIONS"):
         assert client.request(method, "/api/status").status_code == 405
 
 
 def test_security_headers(client):
-    auth.set_password(main.settings, PASSWORD)
+    make_account()
     for r in (client.get("/login"), client.get("/api/status"), client.get("/")):
         h = r.headers
         assert "default-src 'none'" in h["content-security-policy"]
@@ -121,21 +114,22 @@ def test_security_headers(client):
 
 
 def test_login_page_never_echoes_input(client):
-    auth.set_password(main.settings, PASSWORD)
+    make_account()
     r = client.get("/login?m=<script>alert(1)</script>")
     assert "<script>alert" not in r.text and r.status_code == 200
 
 
 def test_raw_endpoint_lookup_is_parameterized(client):
-    auth.set_password(main.settings, PASSWORD)
+    make_account()
     login(client)
     assert client.get("/api/raw/x' OR '1'='1").status_code == 404
 
 
 def test_weekly_type_validated(client):
-    auth.set_password(main.settings, PASSWORD)
+    make_account()
     login(client)
     assert client.get("/api/weekly?type=run").status_code == 200
+    assert client.get("/api/weekly?type=ride").status_code == 200
     assert client.get("/api/weekly?type=%25' OR 1=1--").status_code == 422
 
 
@@ -150,8 +144,8 @@ def test_password_hashing():
 
 def test_secret_files_are_private(client):
     import stat
-    auth.set_password(main.settings, PASSWORD)
-    mode = stat.S_IMODE(main.settings.password_file.stat().st_mode)
+    make_account()
+    mode = stat.S_IMODE(main.settings.account_file.stat().st_mode)
     assert mode == 0o600
     assert stat.S_IMODE(main.settings.secrets_dir.stat().st_mode) == 0o700
     assert stat.S_IMODE(main.settings.db_path.stat().st_mode) == 0o600

@@ -6,6 +6,9 @@ A private, self-hosted dashboard for your own Garmin data.
   HRV, Body Battery, stress and activities.
 - **Optional Garmin Connect sign-in** adds what the official API leaves out:
   VO2 max, training status, training readiness, recovery time and training load.
+- **A built-in coach** gives a daily recommendation, goal-race pace and taper
+  guidance, and a weekly check-in, all computed on your server. You can also
+  connect a local AI model (Ollama) for written notes and questions.
 
 Everything stays on your server. The only things sent anywhere are the
 requests to Garmin that fetch your data.
@@ -27,44 +30,37 @@ shows it only once. Keep it handy for step 4.
 Open the Unraid terminal (the `>_` icon, top right), paste this, and press Enter:
 
 ```bash
-wget -O /boot/config/plugins/dockerMan/templates-user/my-garmin-dashboard.xml https://raw.githubusercontent.com/itsaggo/garmin-dashboard/main/unraid/garmin-dashboard.xml
+wget -O /boot/config/plugins/dockerMan/templates-user/my-garmin-dashboard.xml https://raw.githubusercontent.com/YOUR-GITHUB-USERNAME/garmin-dashboard/main/unraid/garmin-dashboard.xml
 ```
 
 ### 3. Create the container
 
 **Docker** tab → **Add Container** → open the **Template** dropdown → under
-*User templates* pick **garmin-dashboard**. Set your time zone and units (and an
-optional race countdown), then click **Apply**.
+*User templates* pick **garmin-dashboard** → **Apply**. Picking it from the
+dropdown matters: that's what brings in the port, data folder and security
+settings.
 
 It now appears in the Docker tab with your other containers, with its own icon,
 Autostart switch and WebUI link.
 
-### 4. Run the setup
+### 4. Open it and follow the setup
 
-Back in the Unraid terminal:
+Click the container's icon → **WebUI**, or go to `http://YOUR-SERVER-IP:8099`.
+Use the IP shown in the Docker tab's *LAN IP:PORT* column.
 
-```bash
-docker exec -it garmin-dashboard python -m app.setup
-```
+1. **Create your login**: a username and a password of at least 12 characters.
+   Do this right after installing. The first person to open the page creates
+   the only account.
+2. **Paste your Personal API key** from step 1. It's checked with Garmin before
+   it's saved.
+3. **Optionally sign in to Garmin Connect** for VO2 max, training status and
+   recovery. Your Garmin password is used once and **never saved**. If you use
+   two-factor sign-in, you'll be asked for the code.
+4. **Set your preferences**: units, time zone and theme (defaults: miles and
+   Central time), plus your goal race and goal time for the coach.
 
-It asks for:
-
-1. **A dashboard password**, at least 12 characters (a short sentence works well).
-2. **Your Personal API key** from step 1. It checks the key with Garmin before saving.
-3. **Optionally, your Garmin Connect email and password** for VO2 max, training
-   status and recovery. Your password is used once to sign in and is **never saved**.
-   If you use two-factor sign-in, it asks for the code.
-
-Nothing you type is shown on screen.
-
-### 5. Open it
-
-In the Docker tab, click the dashboard's icon → **WebUI**, or go to
-`http://YOUR-SERVER-IP:8099`. Use the IP shown in the Docker tab's *LAN IP:PORT*
-column. Sign in with your dashboard password.
-
-The first sync fetches a year of history and takes a few minutes. Training
-metrics fetch 90 days of history and take a few minutes more.
+The first sync fetches up to a year of history and takes a few minutes. Charts
+fill in as data arrives.
 
 ---
 
@@ -73,26 +69,51 @@ metrics fetch 90 days of history and take a few minutes more.
 Docker tab → **Check for Updates** → **Apply Update** on garmin-dashboard.
 Your data, password and Garmin sign-ins are kept.
 
-## Everyday commands
+## Settings
 
-Run these in the Unraid terminal:
+Everything is in the dashboard's **Settings** page:
 
-| Task | Command |
-|---|---|
-| Change dashboard password | `docker exec -it garmin-dashboard python -m app.setup password` |
-| Replace an expired API key | `docker exec -it garmin-dashboard python -m app.setup api-key` |
-| Re-connect Garmin Connect | `docker exec -it garmin-dashboard python -m app.setup connect` |
-| Remove Garmin Connect sign-in | `docker exec -it garmin-dashboard python -m app.setup disconnect` |
-| Sign out every browser | `docker exec -it garmin-dashboard python -m app.setup logout-all` |
-| See what's set up | `docker exec garmin-dashboard python -m app.setup status` |
-| Re-pull all history | `docker exec garmin-dashboard python -m app.sync --full` |
+- **Goal race, units, time zone and theme**, and whether to show cycling.
+- **Garmin connections:** replace an expired API key, or sign in to Garmin Connect
+  again or disconnect it.
+- **AI coach:** connect a local Ollama model (see below).
+- **Account:** change your password, or sign out other devices.
+- **Your data:** download everything as a file, delete stored Garmin data, or
+  delete everything and start over.
 
-To change a setting (time zone, units, race), use the container's **Edit** in the Docker tab.
+The container's **Edit** screen in the Docker tab only holds server-level
+options: port, data folder, allowed host names, and sync timing.
+
+**Locked out?** Reset the password from the Unraid terminal:
+`docker exec -it garmin-dashboard python -m app.setup reset-password`
+(`python -m app.setup` alone lists the other terminal commands).
 
 **Things that expire:** the Personal API key (Garmin emails you a week before)
 and the Garmin Connect sign-in (typically after months). When either lapses, the
-dashboard shows a banner with the exact command to fix it, and the other data
-source keeps working.
+dashboard shows a banner, you renew it in Settings, and the other data source
+keeps working meanwhile.
+
+## The coach
+
+The **Today** card makes one call, *Rest*, *Easy day*, *Normal training* or
+*Good day for a hard workout*, and lists the reasons behind it. The reasons come
+from your HRV and resting heart rate compared with your own normal, your sleep,
+Body Battery, readiness, yesterday's run, and how this week's load compares with
+the last four. The **Goal race** card shows the pace your goal needs, a
+current-fitness estimate from your fastest recent runs, and the training phase
+(base, build, peak, taper, race week). The **Weekly check-in** compares last
+week with the one before and suggests a target for this week. It needs about
+three weeks of data before "your normal" comparisons mean much.
+
+It's training guidance, not medical advice. If your resting heart rate stays
+high for days, it tells you to rest and see a doctor.
+
+**Optional local AI:** install [Ollama](https://ollama.com) on a machine on
+your network (for example as an Unraid container) and pull a model
+(`ollama pull llama3.1:8b`). Then in **Settings → AI coach**, enter its address
+(e.g. `http://192.168.4.23:11434`), click **Test connection**, pick the model and
+save. The dashboard then gets a *Get today's note* button and a question box.
+Only a short summary of the coach's numbers is sent, and only to that address.
 
 ---
 
@@ -101,7 +122,9 @@ source keeps working.
 What protects your data:
 
 - **Login required for everything.** That includes the API and the page code.
-  Passwords are stored only as a salted scrypt hash. Sessions are random
+  There's one username/password account, and the first visitor creates it, so
+  finish setup right after installing. Passwords are stored only as a salted
+  scrypt hash. Sessions are random
   server-side tokens in an `HttpOnly`, `SameSite=Strict` cookie. They last 30
   days, and you can revoke them.
 - **Brute-force limits.** 5 attempts per address and 20 overall per 15 minutes.
@@ -114,11 +137,15 @@ What protects your data:
   resources. The page can't be embedded in other sites. Requests addressed to
   unknown domain names are refused, which blocks "DNS rebinding" attacks from
   websites you visit.
-- **No secrets in settings or environment variables.** `docker inspect` shows
-  nothing sensitive. Secrets live in `data/secrets/` (folder 0700, files 0600),
-  and only the setup command writes them.
-- **Your Garmin password is never stored.** Only the sign-in token Garmin issues
-  is kept, and you can delete it any time with `setup disconnect`.
+- **No secrets in the container settings or environment variables.** `docker
+  inspect` shows nothing sensitive. The API key, password hash and Garmin
+  sign-in token live in `data/secrets/` (folder 0700, files 0600). The browser
+  never gets them back: Settings only shows "Connected".
+- **Your Garmin password is never stored.** It's passed to Garmin once, then
+  dropped. Only the sign-in token Garmin issues is kept, and you can remove it
+  in Settings. A half-finished two-factor sign-in waits in memory for at most 5
+  minutes, never on disk. Garmin sign-in attempts are rate-limited so a mistake
+  can't get your Garmin account locked.
 - **Locked-down container.** The app runs as Unraid's unprivileged `nobody`
   user with no Linux capabilities. Starting from the Docker tab, the container
   briefly has three: enough to hand the data folder to `nobody` and switch to
@@ -164,11 +191,15 @@ What it can't protect against, and what you should do:
   IP. Add that name to *Allowed host names* (container → Edit), or use the IP.
 - **Apply fails with "denied" or "not found" when pulling the image**: the image
   isn't public yet (see *Publishing* below), or the template still contains
-  `itsaggo`.
+  `YOUR-GITHUB-USERNAME`.
 - **A chart says "No data yet"**: open `/raw` in the dashboard to see exactly what
   Garmin sent. A field name Garmin hasn't documented may need adding to
   `app/extract.py`.
 - **"Too many attempts" on the login page**: wait 15 minutes, or restart the container.
+- **Forgot your password**: `docker exec -it garmin-dashboard python -m app.setup reset-password`.
+- **AI coach says it can't reach Ollama**: use the server's LAN IP rather than
+  `localhost`, since `localhost` inside the container is the container itself.
+  Also check that Ollama listens on the network (`OLLAMA_HOST=0.0.0.0`).
 - **Login says the server is busy**: someone else is trying passwords at the same
   moment. Wait a few seconds and try again.
 - **Garmin Connect sign-in says "too many attempts"**: Garmin limits logins.
@@ -191,7 +222,7 @@ What it can't protect against, and what you should do:
 
 **First time:**
 
-1. Replace `itsaggo` everywhere with your GitHub username in
+1. Replace `YOUR-GITHUB-USERNAME` everywhere with your GitHub username in
    **lowercase**. The container registry requires lowercase.
 2. Push to GitHub.
 3. On GitHub: **Releases** → **Draft a new release** → tag `v1.0.0` → **Publish**.
@@ -227,7 +258,10 @@ Docker tab without an icon or update checks.
 app/
   main.py      web server, login, security headers, background scheduler
   auth.py      password hashing, sessions, login rate limiting
-  setup.py     interactive setup command
+  setup.py     terminal fallback (password reset etc.)
+  prefs.py     Settings-page preferences (validated)
+  garmin_login.py  Garmin Connect sign-in incl. two-factor (web and terminal)
+  coach.py     built-in coach rules + optional Ollama
   sync.py      official Personal API sync (chunked ranges, backoff, token refresh)
   connect.py   optional Garmin Connect sync (VO2 max, training status, readiness)
   extract.py   Garmin JSON → tidy rows

@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="same-origin">
   <title>Garmin Dashboard</title>
+  <script src="/static/theme.js"></script>
   <link rel="stylesheet" href="/static/style.css">
   <link rel="icon" href="/static/favicon.svg">
 </head>
@@ -23,11 +24,30 @@
         <button type="button" data-days="365">1y</button>
       </div>
       <button type="button" class="btn" id="syncBtn">Sync now</button>
+      <a class="btn" href="/settings">Settings</a>
       <form method="post" action="/logout" class="inline"><button class="btn" type="submit">Sign out</button></form>
     </div>
   </header>
 
   <div id="banners"></div>
+
+  <section id="coach">
+    <h2 class="section">Coach</h2>
+    <div class="coach-grid" id="coachCards"></div>
+    <div class="card" id="aiBox" hidden>
+      <div class="ai-head">
+        <h2>AI coach <span class="muted-tag">your local model</span></h2>
+        <button type="button" class="btn" id="aiNote">Get today's note</button>
+      </div>
+      <div class="ai-ask">
+        <input id="aiQuestion" maxlength="500" placeholder="Ask your coach, e.g. Should I run tomorrow?" autocomplete="off">
+        <button type="button" class="btn primary" id="aiAsk">Ask</button>
+      </div>
+      <p class="ai-out" id="aiOut" hidden></p>
+      <p class="note" id="aiMeta"></p>
+    </div>
+    <p class="note" id="coachDisclaimer"></p>
+  </section>
 
   <section class="tiles" id="tiles"></section>
 
@@ -59,6 +79,11 @@
       <h2>Weekly running distance</h2>
       <p class="note" id="weeklyNote">Monday-start weeks</p>
       <div class="chart-box"><canvas id="cWeekly"></canvas></div>
+    </div>
+    <div class="card" id="ridesCard" hidden>
+      <h2>Weekly cycling distance</h2>
+      <p class="note" id="ridesNote"></p>
+      <div class="chart-box"><canvas id="cRides"></canvas></div>
     </div>
     <div class="card">
       <h2>Daily steps</h2>

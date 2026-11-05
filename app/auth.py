@@ -3,11 +3,15 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
+import os
+import re
 import secrets
 import threading
 import time
 from collections import deque
 
+from . import config
 from .config import Settings, write_secret
 from .db import Database
 
@@ -39,23 +43,102 @@ def verify_password(password: str, stored: str) -> bool:
         return False
 
 
-def set_password(settings: Settings, password: str) -> None:
-    write_secret(settings.password_file, hash_password(password) + "\n")
+USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]{3,32}$")
+MAX_PASSWORD_LENGTH = 256
+# Spent on every failed lookup so a wrong username takes as long as a wrong password.
+_DUMMY_HASH = "scrypt$65536$8$1$" + "00" * 16 + "$" + "00" * 32
 
 
-def password_configured(settings: Settings) -> bool:
+def password_problem(password: str) -> str | None:
+    if len(password) < MIN_PASSWORD_LENGTH:
+        return f"Use at least {MIN_PASSWORD_LENGTH} characters (a short sentence works well)."
+    if len(password) > MAX_PASSWORD_LENGTH:
+        return f"Use at most {MAX_PASSWORD_LENGTH} characters."
+    return None
+
+
+def username_problem(username: str) -> str | None:
+    if not USERNAME_RE.match(username or ""):
+        return "Use 3–32 letters, numbers, dots, dashes or underscores."
+    return None
+
+
+def load_account(settings: Settings) -> dict | None:
+    """The single dashboard account: {"username", "hash"}. Migrates v1.0 password-only installs."""
     try:
-        return settings.password_file.read_text().strip().startswith("scrypt$")
+        data = json.loads(settings.account_file.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and USERNAME_RE.match(str(data.get("username", ""))) \
+                and str(data.get("hash", "")).startswith("scrypt$"):
+            return data
+        return None
     except FileNotFoundError:
+        pass
+    except (ValueError, OSError):
+        return None
+    try:  # v1.0 stored only a password hash; keep it working with username "admin"
+        legacy = settings.password_file.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return None
+    if legacy.startswith("scrypt$"):
+        data = {"username": "admin", "hash": legacy}
+        write_secret(settings.account_file, json.dumps(data) + "\n")
+        settings.password_file.unlink(missing_ok=True)
+        return data
+    return None
+
+
+def account_exists(settings: Settings) -> bool:
+    return load_account(settings) is not None
+
+
+def create_account(settings: Settings, username: str, password: str) -> bool:
+    """Create the one account. Returns False if an account already exists (first visitor wins,
+    atomically: two simultaneous sign-ups can't both succeed)."""
+    if account_exists(settings):
         return False
+    body = json.dumps({"username": username, "hash": hash_password(password)}) + "\n"
+    config.ensure_private_dir(settings.account_file.parent)
+    try:
+        fd = os.open(settings.account_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    except FileExistsError:
+        return False
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(body)
+    return True
+
+
+def set_password(settings: Settings, password: str, username: str | None = None) -> None:
+    """Replace the password (and optionally username), keeping the account."""
+    acct = load_account(settings) or {}
+    name = username or acct.get("username") or "admin"
+    write_secret(settings.account_file, json.dumps({"username": name, "hash": hash_password(password)}) + "\n")
+
+
+def password_configured(settings: Settings) -> bool:  # kept for older call sites
+    return account_exists(settings)
+
+
+def check_login(settings: Settings, username: str, password: str) -> bool:
+    acct = load_account(settings)
+    if acct is None:
+        verify_password(password, _DUMMY_HASH)
+        return False
+    name_ok = hmac.compare_digest(username.strip().lower().encode(), acct["username"].lower().encode())
+    pw_ok = verify_password(password, acct["hash"])  # always run, so timing doesn't reveal the username
+    return name_ok and pw_ok
 
 
 def check_password(settings: Settings, password: str) -> bool:
-    try:
-        stored = settings.password_file.read_text()
-    except FileNotFoundError:
+    """Password only (used to confirm sensitive actions by someone already signed in)."""
+    acct = load_account(settings)
+    if acct is None:
         return False
-    return verify_password(password, stored)
+    return verify_password(password, acct["hash"])
+
+
+def current_username(settings: Settings) -> str | None:
+    acct = load_account(settings)
+    return acct["username"] if acct else None
 
 
 def _token_hash(token: str) -> str:
@@ -78,6 +161,10 @@ def session_ok(db: Database, token: str | None) -> bool:
 def end_session(db: Database, token: str | None) -> None:
     if token:
         db.session_delete(_token_hash(token))
+
+
+def end_other_sessions(db: Database, keep_token: str | None) -> int:
+    return db.session_delete_all_except(_token_hash(keep_token) if keep_token else "")
 
 
 class LoginLimiter:
@@ -136,11 +223,11 @@ class LoginLimiter:
 _hash_slots = threading.BoundedSemaphore(2)
 
 
-def check_password_limited(settings: Settings, password: str) -> bool | None:
-    """Like check_password, but returns None (busy) instead of queueing more hashing."""
+def limited(fn, *args) -> bool | None:
+    """Run a password check, or return None (busy) instead of queueing more hashing."""
     if not _hash_slots.acquire(blocking=False):
         return None
     try:
-        return check_password(settings, password)
+        return fn(*args)
     finally:
         _hash_slots.release()

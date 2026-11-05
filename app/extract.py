@@ -171,7 +171,7 @@ def daily_summaries(obj: Any) -> Iterable[tuple[str, dict]]:
             "step_goal": pick(r, "dailyStepGoal", "stepGoal"),
             "distance_m": pick(r, "totalDistanceMeters", "totalDistance"),
             "floors": pick(r, "floorsAscended"),
-            "resting_hr": pick(r, "restingHeartRate", "restingHeartRateInBeatsPerMinute"),
+            "resting_hr": resting_hr(r),
             "min_hr": pick(r, "minHeartRate", "minHeartRateInBeatsPerMinute"),
             "max_hr": pick(r, "maxHeartRate", "maxHeartRateInBeatsPerMinute"),
             "avg_stress": avg_stress if avg_stress is None or avg_stress >= 0 else None,
@@ -333,3 +333,82 @@ def training_status(obj: Any) -> Iterable[tuple[str, dict]]:
     vo2_date, vo2 = _vo2_of((obj.get("mostRecentVO2Max") or {}).get("generic"))
     if vo2_date and vo2 is not None:
         yield vo2_date, {"vo2max": vo2}
+
+
+# ------------------------------------------- resting heart rate (any field name)
+_RHR_EXACT = {"restingheartrate", "restingheartrateinbeatsperminute", "restingheartratevalue",
+              "restinghr", "currentdayrestingheartrate", "rhr", "wellnessrestingheartrate"}
+
+
+def resting_hr(record: Any, depth: int = 0) -> float | None:
+    """Find today's resting heart rate in a record, whatever Garmin calls the field.
+    Skips 7-day averages so the daily value is used."""
+    if depth > 5:
+        return None
+    if isinstance(record, dict):
+        for k, v in record.items():
+            key = k.lower().replace("_", "")
+            if key in _RHR_EXACT and not isinstance(v, (dict, list)):
+                n = _num(v)
+                if n and 25 <= n <= 140:
+                    return n
+        for k, v in record.items():
+            key = k.lower()
+            if "sevenday" in key or "avg" in key or "average" in key:
+                continue
+            if isinstance(v, (dict, list)):
+                found = resting_hr(v, depth + 1)
+                if found:
+                    return found
+    elif isinstance(record, list):
+        for v in record[:50]:
+            found = resting_hr(v, depth + 1)
+            if found:
+                return found
+    return None
+
+
+def heart_rate_day(obj: Any) -> Iterable[tuple[str, dict]]:
+    """Per-day heart-rate summary (Personal API dailyHeartRate)."""
+    for date, r in records(obj):
+        row = _clean({
+            "resting_hr": resting_hr(r),
+            "min_hr": pick(r, "minHeartRate"),
+            "max_hr": pick(r, "maxHeartRate"),
+        })
+        if row:
+            yield date, row
+
+
+def rhr_daily(obj: Any) -> Iterable[tuple[str, dict]]:
+    """garminconnect get_rhr_daily: [{"calendarDate", "value"}]."""
+    for item in obj if isinstance(obj, list) else []:
+        if isinstance(item, dict) and _date_of(item):
+            v = _num(item.get("value"))
+            if v and 25 <= v <= 140:
+                yield _date_of(item), {"resting_hr": v}
+
+
+def race_predictions(obj: Any) -> Iterable[tuple[str, dict]]:
+    """garminconnect get_race_predictions(daily): time5K / time10K / timeHalfMarathon / timeMarathon (seconds)."""
+    for date, r in records(obj):
+        row = _clean({
+            "race_5k_s": _num(r.get("time5K")),
+            "race_10k_s": _num(r.get("time10K")),
+            "race_half_s": _num(r.get("timeHalfMarathon")),
+            "race_marathon_s": _num(r.get("timeMarathon")),
+        })
+        if row.get("race_5k_s") and 600 <= row["race_5k_s"] <= 7200:
+            yield date, row
+
+
+def profile(obj: Any) -> dict:
+    """Birth year and sex from a Garmin profile/settings response (for age-adjusted VO2 max)."""
+    out: dict = {}
+    birth = _deep(obj, "birthDate")
+    if isinstance(birth, str) and len(birth) >= 4 and birth[:4].isdigit():
+        out["birth_year"] = int(birth[:4])
+    sex = _deep(obj, "gender") or _deep(obj, "sex")
+    if isinstance(sex, str) and sex.strip():
+        out["sex"] = "female" if sex.strip().lower().startswith("f") else "male" if sex.strip().lower().startswith("m") else None
+    return {k: v for k, v in out.items() if v}

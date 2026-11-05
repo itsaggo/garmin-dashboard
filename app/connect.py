@@ -63,7 +63,7 @@ class ConnectSync:
                 ) from e
         raise RuntimeError("unreachable")
 
-    def fetch_range(self, name: str, fn: Callable, parser: Callable, start: date, end: date) -> int:
+    def fetch_range(self, name: str, fn: Callable, parser: Callable, start: date, end: date, table: str = "training") -> int:
         from garminconnect import GarminConnectConnectionError, GarminConnectNotFoundError
 
         stored = 0
@@ -84,7 +84,7 @@ class ConnectSync:
             self.db.save_raw(f"connect_{name}", f"{a}_{b}", body)
             for day, row in parser(body):
                 if row:
-                    self.db.upsert_training(day, row)
+                    self.db.upsert_day(table, day, row)
                     stored += 1
 
         cursor = start
@@ -121,8 +121,20 @@ class ConnectSync:
         start = today - timedelta(days=days - 1)
         log.info("Garmin Connect sync %s → %s", start, today)
 
+        def predictions(a: str, b: str):
+            return self.client.get_race_predictions(a, b, "daily")
+
+        def profile_job() -> int:
+            from .sync import save_profile
+            found = extract.profile(self.call(self.client.get_userprofile_settings))
+            save_profile(self.db, found)
+            return len(found)
+
         jobs = [
             ("vo2max", lambda: self.fetch_range("vo2max", self.client.get_max_metrics_range, extract.vo2max, start, today)),
+            ("race predictions", lambda: self.fetch_range("race_predictions", predictions, extract.race_predictions, start, today)),
+            ("resting HR", lambda: self.fetch_range("rhr", self.client.get_rhr_daily, extract.rhr_daily, start, today, table="daily")),
+            ("profile", profile_job),
             ("readiness", lambda: self.fetch_range("readiness", self.client.get_training_readiness_range, extract.readiness, start, today)),
             ("training status", lambda: self.sync_training_status(start, today)),
         ]

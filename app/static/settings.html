@@ -2,14 +2,14 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Settings</title>
   <script src="/static/theme.js"></script>
   <link rel="stylesheet" href="/static/style.css">
   <link rel="icon" href="/static/favicon.svg">
 </head>
 <body>
-<main class="settings">
+<main class="settings-page">
   <header class="top">
     <div>
       <h1>Settings</h1>
@@ -22,149 +22,241 @@
   </header>
   <p class="msg" id="pageMsg"></p>
 
-  <section class="card">
-    <h2>Training &amp; display</h2>
-    <form method="post" id="prefsForm" class="grid-form">
-      <div class="fieldset">
-        <h3>Goal race</h3>
-        <label>Race name <input name="race_name" maxlength="80" placeholder="New Orleans Half"></label>
-        <label>Race date <input name="race_date" type="date"></label>
-        <label>Distance
-          <select name="race_distance">
-            <option value="5k">5K</option><option value="10k">10K</option><option value="half">Half marathon</option>
-            <option value="marathon">Marathon</option><option value="custom">Other…</option>
-          </select>
-        </label>
-        <label id="customKmRow" hidden>Distance in km <input name="race_custom_km" type="number" min="0.4" max="500" step="0.01"></label>
-        <label>Goal time <input name="race_goal_time" placeholder="2:05:00" pattern="\d{1,2}:[0-5]\d:[0-5]\d" title="hours:minutes:seconds"></label>
-      </div>
-      <div class="fieldset">
-        <h3>Display</h3>
-        <label>Units
-          <select name="units"><option value="imperial">Miles, feet</option><option value="metric">Kilometers, meters</option></select>
-        </label>
-        <label>Time zone
-          <input name="timezone" list="tzList" spellcheck="false" placeholder="America/Chicago">
-        </label>
-        <datalist id="tzList"></datalist>
-        <label>Theme
-          <select name="theme"><option value="auto">Match my device</option><option value="light">Light</option><option value="dark">Dark</option></select>
-        </label>
-        <label class="check"><input type="checkbox" name="include_cycling"> Show cycling too</label>
-      </div>
-      <div class="row span"><button type="button" class="btn primary" id="prefsSave" data-primary>Save</button><p class="msg" id="prefsMsg"></p></div>
-    </form>
-  </section>
+  <div class="settings-shell">
+    <nav class="side-nav" aria-label="Settings sections">
+      <a href="#general" data-panel="general">General</a>
+      <a href="#garmin" data-panel="garmin">Garmin</a>
+      <a href="#ai" data-panel="ai">AI coach</a>
+      <a href="#customize" data-panel="customize">Customize</a>
+      <a href="#notifications" data-panel="notifications">Notifications</a>
+      <a href="#account" data-panel="account">Account</a>
+      <a href="#data" data-panel="data">Your data</a>
+    </nav>
 
-  <section class="card">
-    <h2>Garmin connections</h2>
-    <div class="subsection">
-      <h3>Personal API key <span class="pill" id="keyStatus"></span></h3>
-      <p class="note">Steps, sleep, heart rate, HRV, Body Battery, stress and activities. Create or renew the key at
-        <a href="https://connect.garmin.com/app/settings/personalApiToken" target="_blank" rel="noopener noreferrer">Garmin Connect → Personal API</a>
-        (Garmin emails you a week before it expires).</p>
-      <form method="post" class="stack">
-        <label for="keyInput">New key</label>
-        <input id="keyInput" type="password" autocomplete="off" spellcheck="false" placeholder="Paste a new key to replace the current one">
-        <div class="row">
-          <button type="button" class="btn primary" id="keySave" data-primary>Save &amp; check key</button>
-          <button type="button" class="btn danger" id="keyRemove" data-show-if-key>Remove key</button>
+    <div>
+      <!-- General -->
+      <section class="panel" data-panel="general">
+        <form method="post" id="prefsForm" class="panel">
+          <div class="card">
+            <div class="switch-row">
+              <div><h2>Training for a race</h2><p class="note">Shows a goal-race box, pace targets and race context for your coach.</p></div>
+              <label class="switch"><input type="checkbox" name="race_enabled" id="raceSwitch" aria-label="Training for a race"><span></span></label>
+            </div>
+            <div class="grid-form" id="raceFields">
+              <label>Race name <input name="race_name" maxlength="80" placeholder="New Orleans Half"></label>
+              <label>Race date <input name="race_date" type="date"></label>
+              <label>Distance
+                <select name="race_distance">
+                  <option value="5k">5K</option><option value="10k">10K</option><option value="half">Half marathon</option>
+                  <option value="marathon">Marathon</option><option value="custom">Other…</option>
+                </select>
+              </label>
+              <label id="customKmRow" hidden>Distance in km <input name="race_custom_km" type="number" min="0.4" max="500" step="0.01"></label>
+              <label>Goal time <input name="race_goal_time" placeholder="2:05:00" pattern="\d{1,2}:[0-5]\d:[0-5]\d" title="hours:minutes:seconds"></label>
+            </div>
+          </div>
+          <div class="card">
+            <h2>Display</h2>
+            <div class="grid-form">
+              <label>Units
+                <select name="units"><option value="imperial">Miles, feet</option><option value="metric">Kilometers, meters</option></select>
+              </label>
+              <label>Time zone <input name="timezone" list="tzList" spellcheck="false" placeholder="America/Chicago"></label>
+              <datalist id="tzList"></datalist>
+              <label>Theme
+                <select name="theme"><option value="auto">Match my device</option><option value="light">Light</option><option value="dark">Dark</option></select>
+              </label>
+              <label class="check"><input type="checkbox" name="include_cycling"> Show cycling</label>
+            </div>
+          </div>
+          <div class="row"><button type="button" class="btn primary" id="prefsSave" data-primary>Save</button><p class="msg" id="prefsMsg"></p></div>
+        </form>
+      </section>
+
+      <!-- Garmin -->
+      <section class="panel" data-panel="garmin" hidden>
+        <div class="card">
+          <h2>Personal API key <span class="pill" id="keyStatus"></span></h2>
+          <p class="note">Steps, sleep, heart rate, HRV, Body Battery, stress and activities. Create or renew the key at
+            <a href="https://connect.garmin.com/app/settings/personalApiToken" target="_blank" rel="noopener noreferrer">Garmin Connect → Personal API</a>.</p>
+          <form method="post" class="stack">
+            <label for="keyInput">New key</label>
+            <input id="keyInput" type="password" autocomplete="off" spellcheck="false" placeholder="Paste a new key to replace the current one">
+            <div class="row">
+              <button type="button" class="btn primary" id="keySave" data-primary>Save &amp; check key</button>
+              <button type="button" class="btn danger" id="keyRemove" data-show-if-key>Remove key</button>
+            </div>
+            <p class="msg" id="keyMsg"></p>
+          </form>
         </div>
-        <p class="msg" id="keyMsg"></p>
-      </form>
-    </div>
-    <div class="subsection">
-      <h3>Garmin Connect <span class="muted-tag">VO2 max, training status, readiness, recovery</span> <span class="pill" id="connectStatus"></span></h3>
-      <p class="note">Your password is used once and never saved. Signing in again replaces the old sign-in only if it succeeds.</p>
-      <form method="post" class="stack" id="connectForm">
-        <label for="cEmail">Garmin email</label>
-        <input id="cEmail" type="email" autocomplete="off" spellcheck="false">
-        <label for="cPassword">Garmin password</label>
-        <input id="cPassword" type="password" autocomplete="off">
-        <div class="row">
-          <button type="button" class="btn primary" id="connectBtn" data-primary>Sign in to Garmin</button>
-          <button type="button" class="btn danger" id="connectRemove" data-show-if-connected>Disconnect</button>
+        <div class="card">
+          <h2>Garmin Connect <span class="pill" id="connectStatus"></span></h2>
+          <p class="note">Adds VO2 max, training readiness, training status, recovery time, Garmin's race predictor and a backup source for resting heart rate.
+            Your password is used once and never saved.</p>
+          <form method="post" class="stack" id="connectForm">
+            <label for="cEmail">Garmin email</label>
+            <input id="cEmail" type="email" autocomplete="off" spellcheck="false">
+            <label for="cPassword">Garmin password</label>
+            <input id="cPassword" type="password" autocomplete="off">
+            <div class="row">
+              <button type="button" class="btn primary" id="connectBtn" data-primary>Sign in to Garmin</button>
+              <button type="button" class="btn danger" id="connectRemove" data-show-if-connected>Disconnect</button>
+            </div>
+          </form>
+          <form method="post" class="stack" id="mfaForm" hidden>
+            <label for="mfaCode">Two-factor code</label>
+            <input id="mfaCode" inputmode="numeric" autocomplete="one-time-code" maxlength="10">
+            <div class="row"><button type="button" class="btn primary" id="mfaBtn" data-primary>Verify code</button></div>
+          </form>
+          <p class="msg" id="connectMsg"></p>
         </div>
-      </form>
-      <form method="post" class="stack" id="mfaForm" hidden>
-        <label for="mfaCode">Two-factor code</label>
-        <input id="mfaCode" inputmode="numeric" autocomplete="one-time-code" maxlength="10">
-        <div class="row"><button type="button" class="btn primary" id="mfaBtn" data-primary>Verify code</button></div>
-      </form>
-      <p class="msg" id="connectMsg"></p>
-    </div>
-  </section>
+      </section>
 
-  <section class="card">
-    <h2>AI coach <span class="muted-tag">optional, runs on your own server</span></h2>
-    <p class="note">The built-in coach always works. Connect <a href="https://ollama.com" target="_blank" rel="noopener noreferrer">Ollama</a>
-      on your network to also get notes in plain English and ask questions. Only a short summary of the coach's numbers is sent,
-      and only to the address you enter here.</p>
-    <form method="post" id="aiForm" class="stack">
-      <label class="check"><input type="checkbox" name="ai_enabled"> Use my local AI model</label>
-      <label>Ollama address <input name="ollama_url" spellcheck="false" placeholder="http://192.168.4.23:11434"></label>
-      <label>Model <input name="ollama_model" list="modelList" spellcheck="false" placeholder="llama3.1:8b"></label>
-      <datalist id="modelList"></datalist>
-      <div class="row">
-        <button type="button" class="btn" id="aiTest">Test connection</button>
-        <button type="button" class="btn primary" id="aiSave" data-primary>Save</button>
-      </div>
-      <p class="msg" id="aiMsg"></p>
-    </form>
-  </section>
+      <!-- AI coach -->
+      <section class="panel" data-panel="ai" hidden>
+        <div class="card">
+          <h2>AI coach</h2>
+          <p class="note">Each morning your coach reads a summary of your numbers and writes a short insight, and you can ask it questions.
+            Only that summary is sent (no name, email or raw files). Cloud providers bill you directly, about a cent per insight, and the
+            dashboard caps use at 8 rewrites and 30 questions a day.</p>
+          <form method="post" id="aiForm" class="stack">
+            <div class="providers" role="radiogroup" aria-label="AI provider">
+              <label class="provider"><input type="radio" name="ai_provider" value="none"><b>Off</b><span>No AI coach</span></label>
+              <label class="provider"><input type="radio" name="ai_provider" value="claude"><b>Claude</b><span>Anthropic</span></label>
+              <label class="provider"><input type="radio" name="ai_provider" value="gemini"><b>Gemini</b><span>Google</span></label>
+              <label class="provider"><input type="radio" name="ai_provider" value="openai"><b>ChatGPT</b><span>OpenAI</span></label>
+              <label class="provider"><input type="radio" name="ai_provider" value="ollama"><b>Local</b><span>Ollama on your network</span></label>
+            </div>
+            <div id="aiCloud" hidden>
+              <label for="aiKey">API key <span class="pill" id="aiKeyStatus"></span></label>
+              <input id="aiKey" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your API key">
+              <p class="note" id="aiKeyHelp"></p>
+              <div class="row">
+                <button type="button" class="btn" id="aiKeySave">Save &amp; check key</button>
+                <button type="button" class="btn danger" id="aiKeyRemove">Remove key</button>
+              </div>
+            </div>
+            <div id="aiLocal" hidden>
+              <label>Ollama address <input name="ollama_url" spellcheck="false" placeholder="http://192.168.4.23:11434"></label>
+              <div class="row"><button type="button" class="btn" id="aiTest">Find models</button></div>
+            </div>
+            <div id="aiModelRow" hidden>
+              <label>Model <input name="ai_model" list="modelList" spellcheck="false" placeholder="Choose or type a model"></label>
+              <datalist id="modelList"></datalist>
+            </div>
+            <div class="row"><button type="button" class="btn primary" id="aiSave" data-primary>Save</button></div>
+            <p class="msg" id="aiMsg"></p>
+          </form>
+        </div>
+      </section>
 
-  <section class="card">
-    <h2>Account &amp; security</h2>
-    <form method="post" class="stack" id="pwForm">
-      <h3>Change password</h3>
-      <input type="text" name="username" autocomplete="username" hidden>
-      <label for="pwCurrent">Current password</label>
-      <input id="pwCurrent" type="password" autocomplete="current-password">
-      <label for="pwNew">New password <span class="hint">at least 12 characters</span></label>
-      <input id="pwNew" type="password" autocomplete="new-password">
-      <label for="pwNew2">Repeat new password</label>
-      <input id="pwNew2" type="password" autocomplete="new-password">
-      <div class="row"><button type="button" class="btn primary" id="pwSave" data-primary>Change password</button></div>
-      <p class="msg" id="pwMsg"></p>
-    </form>
-    <div class="subsection">
-      <h3>Other devices</h3>
-      <div class="row"><button type="button" class="btn" id="logoutOthers">Sign out all other devices</button></div>
-      <p class="msg" id="logoutMsg"></p>
-    </div>
-  </section>
+      <!-- Customize -->
+      <section class="panel" data-panel="customize" hidden>
+        <div class="card">
+          <h2>Customize your dashboard</h2>
+          <p class="note">Drag boxes between the main page, the Details tab and Hidden. Drag a box's bottom-right corner to resize it.
+            On a phone, boxes stack full-width in the same order. Keyboard: arrows resize, Alt+arrows reorder.</p>
+          <div id="editor">
+            <div class="zone-wrap"><h3>Main page</h3><div class="zone" data-zone="main"></div></div>
+            <div class="zone-wrap"><h3>Details tab</h3><div class="zone" data-zone="details"></div></div>
+            <div class="zone-wrap"><h3>Hidden <span class="muted-tag">not shown anywhere</span></h3><div class="zone" data-zone="hidden"></div></div>
+          </div>
+          <div class="editor-bar">
+            <button type="button" class="btn primary" id="layoutSave">Save layout</button>
+            <button type="button" class="btn" id="layoutReset">Reset to default</button>
+            <span class="msg" id="layoutMsg"></span>
+          </div>
+        </div>
+      </section>
 
-  <section class="card">
-    <h2>Your data</h2>
-    <div class="subsection">
-      <h3>Export</h3>
-      <p class="note">Download everything stored (daily stats, training metrics, activities, preferences) as a JSON file.
-        It contains no passwords, keys or sign-in tokens.</p>
-      <a class="btn" href="/api/export" download>Download my data</a>
+      <!-- Notifications -->
+      <section class="panel" data-panel="notifications" hidden>
+        <div class="card">
+          <h2>Discord <span class="pill" id="discordStatus"></span></h2>
+          <p class="note">Posts to a Discord channel you choose. In Discord: open the channel's <b>Edit Channel → Integrations →
+            Webhooks → New Webhook</b>, then <b>Copy Webhook URL</b> and paste it here. Treat the link like a password; it's stored
+            privately on your server. Messages include your scores and coach notes, and never ping anyone.</p>
+          <form method="post" class="stack">
+            <label for="hookInput">Webhook URL</label>
+            <input id="hookInput" type="password" autocomplete="off" spellcheck="false" placeholder="https://discord.com/api/webhooks/…">
+            <div class="row">
+              <button type="button" class="btn primary" id="hookSave" data-primary>Save &amp; send test</button>
+              <button type="button" class="btn" id="hookTest" data-show-if-discord>Send today's message now</button>
+              <button type="button" class="btn danger" id="hookRemove" data-show-if-discord>Remove</button>
+            </div>
+            <p class="msg" id="hookMsg"></p>
+          </form>
+        </div>
+        <div class="card">
+          <h2>What to send</h2>
+          <form method="post" id="notifyForm" class="stack">
+            <label class="check"><input type="checkbox" name="notify_morning"> Morning insight <span class="hint">around 7 a.m.: your coach's note, fitness score, readiness, sleep</span></label>
+            <label class="check"><input type="checkbox" name="notify_weekly"> Weekly summary <span class="hint">Monday morning recap of last week</span></label>
+            <label class="check"><input type="checkbox" name="notify_problems"> Problems &amp; warnings <span class="hint">sync failures, expired Garmin key or sign-in, resting heart rate high for 3 days</span></label>
+            <div class="row"><button type="button" class="btn primary" id="notifySave" data-primary>Save</button></div>
+            <p class="msg" id="notifyMsg"></p>
+          </form>
+        </div>
+      </section>
+
+      <!-- Account -->
+      <section class="panel" data-panel="account" hidden>
+        <div class="card">
+          <form method="post" class="stack" id="pwForm">
+            <h2>Change password</h2>
+            <input type="text" name="username" autocomplete="username" hidden>
+            <label for="pwCurrent">Current password</label>
+            <input id="pwCurrent" type="password" autocomplete="current-password">
+            <label for="pwNew">New password <span class="hint">at least 12 characters</span></label>
+            <input id="pwNew" type="password" autocomplete="new-password">
+            <label for="pwNew2">Repeat new password</label>
+            <input id="pwNew2" type="password" autocomplete="new-password">
+            <div class="row"><button type="button" class="btn primary" id="pwSave" data-primary>Change password</button></div>
+            <p class="msg" id="pwMsg"></p>
+          </form>
+          <div class="subsection">
+            <h3>Other devices</h3>
+            <div class="row"><button type="button" class="btn" id="logoutOthers">Sign out all other devices</button></div>
+            <p class="msg" id="logoutMsg"></p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Data -->
+      <section class="panel" data-panel="data" hidden>
+        <div class="card">
+          <h2>Export</h2>
+          <p class="note">Download everything stored (daily stats, training metrics, activities, preferences) as a JSON file.
+            It contains no passwords, keys or sign-in tokens.</p>
+          <a class="btn" href="/api/export" download>Download my data</a>
+        </div>
+        <div class="card">
+          <form method="post" class="stack">
+            <h2>Delete stored Garmin data</h2>
+            <p class="note">Wipes synced data from this dashboard. Your account and connections stay, and data re-syncs from Garmin.</p>
+            <input type="text" name="username" autocomplete="username" hidden>
+            <label for="delPw1">Your password</label>
+            <input id="delPw1" type="password" autocomplete="current-password">
+            <div class="row"><button type="button" class="btn danger" id="delDataBtn" data-primary>Delete stored data</button></div>
+          </form>
+          <form method="post" class="stack subsection">
+            <h2>Delete everything and start over</h2>
+            <p class="note">Removes all data, your account, and every saved key and sign-in from this dashboard. Can't be undone.</p>
+            <input type="text" name="username" autocomplete="username" hidden>
+            <label for="delPw2">Your password</label>
+            <input id="delPw2" type="password" autocomplete="current-password">
+            <label for="delConfirm">Type DELETE to confirm</label>
+            <input id="delConfirm" autocomplete="off" spellcheck="false">
+            <div class="row"><button type="button" class="btn danger" id="delAllBtn" data-primary>Delete everything</button></div>
+          </form>
+          <p class="msg" id="dataMsg"></p>
+        </div>
+      </section>
     </div>
-    <form method="post" class="subsection stack">
-      <h3>Delete stored Garmin data</h3>
-      <p class="note">Wipes synced data from this dashboard. Your account and Garmin connections stay, and data re-syncs from Garmin.</p>
-      <input type="text" name="username" autocomplete="username" hidden>
-      <label for="delPw1">Your password</label>
-      <input id="delPw1" type="password" autocomplete="current-password">
-      <div class="row"><button type="button" class="btn danger" id="delDataBtn" data-primary>Delete stored data</button></div>
-    </form>
-    <form method="post" class="subsection stack">
-      <h3>Delete everything and start over</h3>
-      <p class="note">Removes all data, your account, your API key and Garmin sign-in from this dashboard. Can't be undone.
-        (Your Garmin account itself isn't touched; you can also delete the key at Garmin.)</p>
-      <input type="text" name="username" autocomplete="username" hidden>
-      <label for="delPw2">Your password</label>
-      <input id="delPw2" type="password" autocomplete="current-password">
-      <label for="delConfirm">Type DELETE to confirm</label>
-      <input id="delConfirm" autocomplete="off" spellcheck="false">
-      <div class="row"><button type="button" class="btn danger" id="delAllBtn" data-primary>Delete everything</button></div>
-    </form>
-    <p class="msg" id="dataMsg"></p>
-  </section>
+  </div>
 </main>
 <script src="/static/common.js"></script>
+<script src="/static/grid.js"></script>
 <script src="/static/settings.js"></script>
 </body>
 </html>

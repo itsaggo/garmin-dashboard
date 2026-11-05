@@ -2,9 +2,10 @@
    if its elements exist on the page. Needs common.js. */
 "use strict";
 
-const PREF_FIELDS = ["units", "timezone", "theme", "include_cycling", "race_name", "race_date",
+const PREF_FIELDS = ["units", "timezone", "theme", "include_cycling", "race_enabled", "race_name", "race_date",
   "race_distance", "race_custom_km", "race_goal_time"];
-const AI_FIELDS = ["ai_enabled", "ollama_url", "ollama_model"];
+const AI_FIELDS = ["ai_provider", "ai_model", "ollama_url"];
+const NOTIFY_FIELDS = ["notify_morning", "notify_weekly", "notify_problems"];
 let state = null;
 
 function fieldValue(form, name) {
@@ -27,6 +28,8 @@ function fillForm(form, prefs, names) {
 function showCustomKm(form) {
   const row = $("#customKmRow");
   if (row) row.hidden = form.elements.race_distance.value !== "custom";
+  const fields = $("#raceFields");
+  if (fields && form.elements.race_enabled) fields.hidden = !form.elements.race_enabled.checked;
 }
 
 function renderStatus() {
@@ -42,6 +45,9 @@ function renderStatus() {
   }
   for (const el of $$("[data-show-if-connected]")) el.hidden = !state.connect_configured;
   for (const el of $$("[data-show-if-key]")) el.hidden = !state.api_key_configured;
+  for (const el of $$("[data-show-if-discord]")) el.hidden = !state.discord_saved;
+  const ds = $("#discordStatus");
+  if (ds) { ds.textContent = state.discord_saved ? "✓ Connected" : "Not connected"; ds.className = "pill " + (state.discord_saved ? "on" : ""); }
   const user = $("#username");
   if (user) user.textContent = state.username || "";
 }
@@ -51,8 +57,10 @@ async function loadState() {
   applyTheme(state.prefs.theme);
   const prefsForm = $("#prefsForm");
   if (prefsForm) { fillForm(prefsForm, state.prefs, PREF_FIELDS); showCustomKm(prefsForm); }
+  const nf = $("#notifyForm");
+  if (nf) fillForm(nf, state.prefs, NOTIFY_FIELDS);
   const aiForm = $("#aiForm");
-  if (aiForm) fillForm(aiForm, state.prefs, AI_FIELDS);
+  if (aiForm) { fillForm(aiForm, state.prefs, AI_FIELDS); showProvider(); }
   renderStatus();
 }
 
@@ -171,27 +179,155 @@ function wirePrefs() {
     }
   }
   form.elements.race_distance.addEventListener("change", () => showCustomKm(form));
+  if (form.elements.race_enabled) form.elements.race_enabled.addEventListener("change", () => showCustomKm(form));
   form.elements.theme.addEventListener("change", () => applyTheme(form.elements.theme.value));
   const btn = $("#prefsSave");
   if (btn) btn.addEventListener("click", () => busy(btn, () => savePrefs(form, PREF_FIELDS, $("#prefsMsg"))));
 }
 
+function provider() { const f = $("#aiForm"); return f ? f.elements.ai_provider.value || "none" : "none"; }
+
+function fillModels(models, suggested) {
+  const list = $("#modelList");
+  list.replaceChildren(...models.map((m) => { const o = document.createElement("option"); o.value = m; return o; }));
+  const input = $("#aiForm").elements.ai_model;
+  if (suggested && (!input.value || !models.includes(input.value))) input.value = suggested;
+}
+
+function showProvider() {
+  const p = provider();
+  const info = (state.ai_providers || {})[p];
+  $("#aiCloud").hidden = !(info && info.keyed);
+  $("#aiLocal").hidden = p !== "ollama";
+  $("#aiModelRow").hidden = p === "none";
+  if (info && info.keyed) {
+    const saved = state.ai_keys_saved && state.ai_keys_saved[p];
+    $("#aiKeyStatus").textContent = saved ? "✓ Saved" : "Not saved";
+    $("#aiKeyStatus").className = "pill " + (saved ? "on" : "");
+    $("#aiKeyRemove").hidden = !saved;
+    const help = $("#aiKeyHelp");
+    help.replaceChildren("Get a key from ");
+    const a = document.createElement("a");
+    a.href = info.key_url; a.target = "_blank"; a.rel = "noopener noreferrer"; a.textContent = info.label;
+    help.append(a, ". It's stored privately on your server and never shown again.");
+  }
+}
+
+async function loadModels(p) {
+  const body = { provider: p };
+  if (p === "ollama") body.url = $("#aiForm").elements.ollama_url.value.trim();
+  const res = await api("/api/ai/models", { method: "POST", body });
+  fillModels(res.models, res.suggested);
+  return res.models;
+}
+
 function wireAi() {
   const form = $("#aiForm");
   if (!form) return;
-  $("#aiTest").addEventListener("click", () => busy($("#aiTest"), async () => {
-    const url = form.elements.ollama_url.value.trim();
-    say($("#aiMsg"), "Contacting Ollama…");
+  const msg = $("#aiMsg");
+  for (const r of form.querySelectorAll("input[name=ai_provider]")) {
+    r.addEventListener("change", async () => {
+      showProvider(); say(msg, "");
+      const p = provider();
+      if (state.ai_keys_saved && state.ai_keys_saved[p]) {
+        try { await loadModels(p); } catch (e) { say(msg, e.message, "err"); }
+      }
+    });
+  }
+  $("#aiKeySave").addEventListener("click", () => busy($("#aiKeySave"), async () => {
+    const key = $("#aiKey").value.trim();
+    if (!key) return say(msg, "Paste your API key first.", "err");
+    say(msg, "Checking the key…");
     try {
-      const res = await api("/api/coach/ai/test", { method: "POST", body: { url } });
-      const list = $("#modelList");
-      list.replaceChildren(...res.models.map((m) => { const o = document.createElement("option"); o.value = m; return o; }));
-      if (!form.elements.ollama_model.value && res.models[0]) form.elements.ollama_model.value = res.models[0];
-      say($("#aiMsg"), res.models.length ? `Connected. Models found: ${res.models.join(", ")}` :
-        "Connected, but no models are installed. On the server run: ollama pull llama3.1:8b", res.models.length ? "ok" : "err");
-    } catch (e) { say($("#aiMsg"), e.message, "err"); }
+      const res = await api("/api/ai/key", { method: "POST", body: { provider: provider(), key } });
+      $("#aiKey").value = "";
+      state.ai_keys_saved[provider()] = true; showProvider();
+      fillModels(res.models, res.suggested);
+      say(msg, `Key saved. ${res.models.length} models available. Pick one and press Save.`, "ok");
+    } catch (e) { say(msg, e.message, "err"); }
   }));
-  $("#aiSave").addEventListener("click", () => busy($("#aiSave"), () => savePrefs(form, AI_FIELDS, $("#aiMsg"))));
+  $("#aiKeyRemove").addEventListener("click", () => busy($("#aiKeyRemove"), async () => {
+    if (!confirm("Remove this API key from the dashboard?")) return;
+    try {
+      await api("/api/ai/key/remove", { method: "POST", body: { provider: provider() } });
+      state.ai_keys_saved[provider()] = false; showProvider();
+      say(msg, "Key removed.", "ok");
+    } catch (e) { say(msg, e.message, "err"); }
+  }));
+  $("#aiTest").addEventListener("click", () => busy($("#aiTest"), async () => {
+    say(msg, "Contacting Ollama…");
+    try {
+      const models = await loadModels("ollama");
+      say(msg, models.length ? `Found: ${models.join(", ")}` : "Connected, but no models installed. On that machine run: ollama pull llama3.1:8b", models.length ? "ok" : "err");
+    } catch (e) { say(msg, e.message, "err"); }
+  }));
+  $("#aiSave").addEventListener("click", () => busy($("#aiSave"), async () => {
+    const p = provider();
+    if (p !== "none" && !form.elements.ai_model.value.trim()) return say(msg, "Choose a model first.", "err");
+    if (await savePrefs(form, AI_FIELDS, msg) && p !== "none") say(msg, "Saved. Your coach writes its first insight within a minute or two.", "ok");
+  }));
+}
+
+/* ---------------------------------------------------------------- customize */
+function wireCustomize() {
+  const root = $("#editor");
+  if (!root) return;
+  const titles = Object.fromEntries(Object.entries(state.widgets).map(([k, v]) => [k, v.title]));
+  let current = state.prefs.layout;
+  const msg = $("#layoutMsg");
+  const ed = GDGrid.editor(root, { items: current, titles, onChange: (m) => { current = m; say(msg, "Unsaved changes"); } });
+  $("#layoutSave").addEventListener("click", () => busy($("#layoutSave"), async () => {
+    try {
+      const res = await api("/api/settings", { method: "POST", body: { values: { layout: current } } });
+      state.prefs = res.prefs; current = res.prefs.layout;
+      say(msg, "Layout saved.", "ok");
+    } catch (e) { say(msg, e.message, "err"); }
+  }));
+  $("#layoutReset").addEventListener("click", () => {
+    current = Object.entries(state.widgets).map(([id, w]) => ({ id, section: w.section, w: w.w, h: w.h }));
+    ed.load(current);
+    say(msg, "Default layout restored. Press Save layout to keep it.");
+  });
+}
+
+/* ---------------------------------------------------------------- notifications */
+function wireNotify() {
+  if (!$("#hookSave")) return;
+  const msg = $("#hookMsg");
+  $("#hookSave").addEventListener("click", () => busy($("#hookSave"), async () => {
+    const url = $("#hookInput").value.trim();
+    if (!url) return say(msg, "Paste the webhook URL first.", "err");
+    say(msg, "Sending a test message to Discord…");
+    try {
+      await api("/api/notify/webhook", { method: "POST", body: { url } });
+      $("#hookInput").value = ""; state.discord_saved = true; renderStatus();
+      say(msg, "Connected. Check your Discord channel for the test message.", "ok");
+    } catch (e) { say(msg, e.message, "err"); }
+  }));
+  $("#hookTest").addEventListener("click", () => busy($("#hookTest"), async () => {
+    try { await api("/api/notify/test", { method: "POST" }); say(msg, "Sent.", "ok"); }
+    catch (e) { say(msg, e.message, "err"); }
+  }));
+  $("#hookRemove").addEventListener("click", () => busy($("#hookRemove"), async () => {
+    if (!confirm("Remove the Discord webhook? Notifications stop.")) return;
+    try { await api("/api/notify/webhook/remove", { method: "POST" }); state.discord_saved = false; renderStatus(); say(msg, "Removed.", "ok"); }
+    catch (e) { say(msg, e.message, "err"); }
+  }));
+  $("#notifySave").addEventListener("click", () => busy($("#notifySave"), () => savePrefs($("#notifyForm"), NOTIFY_FIELDS, $("#notifyMsg"))));
+}
+
+/* ---------------------------------------------------------------- panels */
+function wirePanels() {
+  const links = $$(".side-nav a");
+  if (!links.length) return;
+  const show = () => {
+    const want = (location.hash || "#general").slice(1);
+    const name = links.some((a) => a.dataset.panel === want) ? want : "general";
+    for (const p of $$("section.panel[data-panel]")) p.hidden = p.dataset.panel !== name;
+    for (const a of links) a.classList.toggle("on", a.dataset.panel === name);
+  };
+  window.addEventListener("hashchange", show);
+  show();
 }
 
 /* ---------------------------------------------------------------- account */
@@ -284,5 +420,5 @@ function wireWizard() {
     });
   }
   try { await loadState(); } catch (e) { say($("#pageMsg"), "Couldn't load settings: " + e.message, "err"); return; }
-  wireApiKey(); wireConnect(); wirePrefs(); wireAi(); wireAccount(); wireData(); wireWizard();
+  wirePanels(); wireApiKey(); wireConnect(); wirePrefs(); wireAi(); wireCustomize(); wireNotify(); wireAccount(); wireData(); wireWizard();
 })();

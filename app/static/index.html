@@ -2,132 +2,55 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="referrer" content="same-origin">
-  <title>Garmin Dashboard</title>
+  <meta name="theme-color" content="#134E5E">
+  <title>Training Dashboard</title>
   <script src="/static/theme.js"></script>
   <link rel="stylesheet" href="/static/style.css">
   <link rel="icon" href="/static/favicon.svg">
 </head>
-<body>
-<main>
-  <header class="top">
-    <div>
-      <h1>Training Dashboard</h1>
-      <div class="sub" id="syncInfo">Loading…</div>
+<body class="dash">
+<header class="appbar">
+  <a class="brand" href="/"><img src="/static/favicon.svg" alt="" width="30" height="30"><span>Training</span></a>
+  <nav class="tabs" aria-label="Pages">
+    <a href="#main" data-tab="main" class="tab">Overview</a>
+    <a href="#details" data-tab="details" class="tab">Details</a>
+  </nav>
+  <div class="appbar-r">
+    <div class="seg" id="range" role="group" aria-label="Chart range">
+      <button type="button" data-days="30">30d</button>
+      <button type="button" data-days="90" aria-pressed="true">90d</button>
+      <button type="button" data-days="180">6m</button>
+      <button type="button" data-days="365">1y</button>
     </div>
-    <div class="controls">
-      <div class="seg" id="range" role="group" aria-label="Date range">
-        <button type="button" data-days="30">30d</button>
-        <button type="button" data-days="90" aria-pressed="true">90d</button>
-        <button type="button" data-days="180">6m</button>
-        <button type="button" data-days="365">1y</button>
-      </div>
-      <button type="button" class="btn" id="syncBtn">Sync now</button>
-      <a class="btn" href="/settings">Settings</a>
-      <form method="post" action="/logout" class="inline"><button class="btn" type="submit">Sign out</button></form>
-    </div>
-  </header>
+    <button type="button" class="icon-btn" id="syncBtn" title="Sync now" aria-label="Sync now">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 12a8 8 0 0 1-14.3 4.9M4 12A8 8 0 0 1 18.3 7.1M18 3v4.5h-4.5M6 21v-4.5h4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <a class="icon-btn desk-only" href="/settings" title="Settings" aria-label="Settings">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+    </a>
+  </div>
+</header>
 
+<main class="board-wrap">
+  <div class="status-line"><span id="syncInfo">Loading…</span><span id="counts"></span></div>
   <div id="banners"></div>
-
-  <section id="coach">
-    <h2 class="section">Coach</h2>
-    <div class="coach-grid" id="coachCards"></div>
-    <div class="card" id="aiBox" hidden>
-      <div class="ai-head">
-        <h2>AI coach <span class="muted-tag">your local model</span></h2>
-        <button type="button" class="btn" id="aiNote">Get today's note</button>
-      </div>
-      <div class="ai-ask">
-        <input id="aiQuestion" maxlength="500" placeholder="Ask your coach, e.g. Should I run tomorrow?" autocomplete="off">
-        <button type="button" class="btn primary" id="aiAsk">Ask</button>
-      </div>
-      <p class="ai-out" id="aiOut" hidden></p>
-      <p class="note" id="aiMeta"></p>
-    </div>
-    <p class="note" id="coachDisclaimer"></p>
-  </section>
-
-  <section class="tiles" id="tiles"></section>
-
-  <section id="trainingSection" hidden>
-    <h2 class="section">Training <span class="muted-tag">via Garmin Connect</span></h2>
-    <section class="tiles" id="trainingTiles"></section>
-    <section class="grid">
-      <div class="card">
-        <h2>VO2 max</h2>
-        <p class="note">ml/kg/min · running estimate</p>
-        <div class="chart-box"><canvas id="cVo2"></canvas></div>
-      </div>
-      <div class="card">
-        <h2>Training readiness</h2>
-        <p class="note">morning score (0–100)</p>
-        <div class="chart-box"><canvas id="cReady"></canvas></div>
-      </div>
-      <div class="card wide">
-        <h2>Training load</h2>
-        <p class="note">acute (7-day) vs chronic (28-day) load</p>
-        <div class="chart-box short"><canvas id="cLoad"></canvas></div>
-      </div>
-    </section>
-  </section>
-
-  <h2 class="section">Health &amp; activity</h2>
-  <section class="grid">
-    <div class="card">
-      <h2>Weekly running distance</h2>
-      <p class="note" id="weeklyNote">Monday-start weeks</p>
-      <div class="chart-box"><canvas id="cWeekly"></canvas></div>
-    </div>
-    <div class="card" id="ridesCard" hidden>
-      <h2>Weekly cycling distance</h2>
-      <p class="note" id="ridesNote"></p>
-      <div class="chart-box"><canvas id="cRides"></canvas></div>
-    </div>
-    <div class="card">
-      <h2>Daily steps</h2>
-      <p class="note">Dashed line is your step goal</p>
-      <div class="chart-box"><canvas id="cSteps"></canvas></div>
-    </div>
-    <div class="card">
-      <h2>Resting heart rate</h2>
-      <p class="note">bpm · daily value and 7-day average</p>
-      <div class="chart-box"><canvas id="cRhr"></canvas></div>
-    </div>
-    <div class="card">
-      <h2>HRV</h2>
-      <p class="note">ms · overnight average and Garmin's 7-day average</p>
-      <div class="chart-box"><canvas id="cHrv"></canvas></div>
-    </div>
-    <div class="card">
-      <h2>Sleep</h2>
-      <p class="note">hours per night by stage</p>
-      <div class="chart-box"><canvas id="cSleep"></canvas></div>
-    </div>
-    <div class="card">
-      <h2>Body Battery</h2>
-      <p class="note">daily low → high range</p>
-      <div class="chart-box"><canvas id="cBB"></canvas></div>
-    </div>
-    <div class="card wide">
-      <h2>Average stress</h2>
-      <p class="note">Garmin all-day stress score (0–100)</p>
-      <div class="chart-box short"><canvas id="cStress"></canvas></div>
-    </div>
-    <div class="card wide">
-      <h2>Recent activities</h2>
-      <div class="table-wrap"><table id="acts"></table></div>
-    </div>
-  </section>
-
-  <footer>
-    <span id="counts"></span>
-    <a href="/raw">Raw API data</a>
-    <span>Data: Garmin Connect Personal API<span id="connectCredit"></span></span>
-  </footer>
+  <section class="board" id="sec-main" data-section="main" aria-label="Overview"></section>
+  <section class="board" id="sec-details" data-section="details" aria-label="Details" hidden></section>
+  <p class="foot-note">Training guidance from your own data, not medical advice · <a href="/settings#customize">Customize this page</a> · <a href="/raw">Raw data</a></p>
 </main>
+
+<nav class="bottom-nav" aria-label="Pages">
+  <a href="#main" data-tab="main">
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M3 12l9-8 9 8M5 10v10h5v-6h4v6h5V10" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>Overview</a>
+  <a href="#details" data-tab="details">
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Details</a>
+  <a href="/settings">
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Settings</a>
+</nav>
 <script src="/static/vendor/chart.umd.min.js"></script>
+<script src="/static/grid.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

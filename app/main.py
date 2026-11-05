@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import auth, coach, config, garmin_login, prefs, sync
+from . import ai, auth, config, fitness, garmin_login, notify, prefs, sync
 from .db import Database
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -31,8 +31,7 @@ garmin_login.cleanup_stale_staging(settings)
 STATIC = Path(__file__).parent / "static"
 limiter = auth.LoginLimiter()
 garmin_limiter = auth.LoginLimiter(per_ip=5, total=8)  # Garmin sign-ins / key checks (Garmin locks out abusers)
-ai_lock = threading.Lock()
-_ai_cache: dict[str, dict] = {}
+ai_limiter = auth.LoginLimiter(per_ip=10, total=20)  # AI key checks
 _stop = threading.Event()
 _last_manual_sync = 0.0
 MANUAL_SYNC_COOLDOWN_S = 120
@@ -94,6 +93,18 @@ def _scheduler() -> None:
                     log.info("Waiting for setup: open the dashboard in a browser to finish setup")
         except Exception:  # never let the scheduler thread die
             log.exception("Scheduled sync crashed; will retry at the next interval")
+        try:
+            ai.maybe_daily(settings, db, lambda: sync.run_sync(settings, db))
+        except ai.AIError as e:
+            log.warning("Daily AI insight not written: %s", e)
+        except Exception:
+            log.exception("Daily AI insight crashed")
+        try:
+            notify.maybe_send(settings, db)
+        except notify.NotifyError as e:
+            log.warning("Discord notification not sent: %s", e)
+        except Exception:
+            log.exception("Discord notification crashed")
         _stop.wait(30)  # also notices sync requests from `app.setup` within 30 s
 
 
@@ -348,14 +359,17 @@ def status():
         "units": p["units"],
         "theme": p["theme"],
         "include_cycling": p["include_cycling"],
-        "ai_enabled": bool(p["ai_enabled"] and p["ollama_url"] and p["ollama_model"]),
+        "race_enabled": bool(p["race_enabled"]),
+        "ai_configured": ai.configured(settings, p),
+        "ai_provider": p["ai_provider"],
+        "layout": p["layout"],
         "sync_interval_hours": settings.sync_interval_hours,
         "syncing": sync.is_running(settings),
         "last_sync": db.last_sync(),
         "days_stored": db.count("daily"),
         "training_days_stored": db.count("training"),
         "activities_stored": db.count("activities"),
-        "race": {"name": p["race_name"] or "Race day", "date": p["race_date"]} if p["race_date"] else None,
+        "race": fitness.race_card(db),
         "username": auth.current_username(settings),
     }
 
@@ -442,12 +456,22 @@ class DeleteIn(BaseModel):
     scope: str = Field(..., pattern="^(garmin_data|everything)$")
 
 
-class AiIn(BaseModel):
-    question: str | None = Field(None, max_length=500)
+class AskIn(BaseModel):
+    question: str = Field(..., min_length=2, max_length=500)
 
 
-class AiTestIn(BaseModel):
-    url: str = Field(..., max_length=200)
+class AiKeyIn(BaseModel):
+    provider: str = Field(..., pattern="^(claude|gemini|openai)$")
+    key: str = Field(..., min_length=10, max_length=400)
+
+
+class WebhookIn(BaseModel):
+    url: str = Field(..., min_length=40, max_length=300)
+
+
+class AiModelsIn(BaseModel):
+    provider: str = Field(..., pattern="^(claude|gemini|openai|ollama)$")
+    url: str | None = Field(None, max_length=200)
 
 
 @app.get("/api/settings")
@@ -458,6 +482,11 @@ def get_settings():
         "api_key_configured": bool(settings.api_key()),
         "connect_configured": settings.connect_configured(),
         "race_distances": list(prefs.RACE_DISTANCES_KM) + ["custom"],
+        "ai_providers": {k: {"label": v["label"], "keyed": v["keyed"], "key_url": v.get("key_url")}
+                         for k, v in ai.PROVIDERS.items()},
+        "ai_keys_saved": ai.keys_saved(settings),
+        "discord_saved": notify.get_webhook(settings) is not None,
+        "widgets": {k: {"title": t, "section": sec, "w": w, "h": h} for k, (t, sec, w, h) in prefs.WIDGETS.items()},
         "setup_done": db.get_meta("setup_done") is not None,
     }
 
@@ -571,7 +600,7 @@ def logout_others(request: Request):
 @app.get("/api/export")
 def export_data():
     payload = {
-        "exported_at": coach.now_stamp(),
+        "exported_at": date.today().isoformat(),
         "app": "garmin-dashboard",
         "note": "Your stored Garmin data. Contains no passwords, keys or sign-in tokens.",
         "preferences": prefs.get_all(db),
@@ -604,7 +633,6 @@ def delete_data(request: Request, body: DeleteIn):
             shutil.rmtree(settings.secrets_dir, ignore_errors=True)
             config.ensure_private_dir(settings.secrets_dir)
             db.wipe_everything_else()
-    _ai_cache.clear()
     log.warning("Data deleted from the dashboard (scope: %s)", body.scope)
     if body.scope == "everything":
         resp = JSONResponse({"ok": True, "next": "/welcome"})
@@ -613,50 +641,111 @@ def delete_data(request: Request, body: DeleteIn):
     return {"ok": True}
 
 
-# ------------------------------------------------------------------ coach
-@app.get("/api/coach")
-def get_coach():
-    return coach.analyze(db)
+# ------------------------------------------------------------------ fitness & AI coach
+@app.get("/api/overview")
+def get_overview(days: int = Query(90, ge=7, le=365)):
+    return fitness.overview(db, days)
 
 
-@app.post("/api/coach/ai")
-def coach_ai(body: AiIn):
+@app.get("/api/insight")
+def get_insight():
     p = prefs.get_all(db)
-    if not (p["ai_enabled"] and p["ollama_url"] and p["ollama_model"]):
-        raise HTTPException(400, "Turn on the AI coach and choose a model in Settings first.")
-    question = (body.question or "").strip() or None
-    cache_key = f"{date.today()}|{p['ollama_url']}|{p['ollama_model']}"
-    if not question and cache_key in _ai_cache:
-        return _ai_cache[cache_key]
-    if not ai_lock.acquire(blocking=False):
-        raise HTTPException(429, "The coach is already writing an answer. Try again in a moment.")
-    try:
-        text = coach.ollama_note(p["ollama_url"], p["ollama_model"], coach.analyze(db), question)
-    except Exception as e:
-        raise HTTPException(502, f"Couldn't get an answer from Ollama ({type(e).__name__}). "
-                                 "Check the address and model in Settings.") from e
-    finally:
-        ai_lock.release()
-    result = {"text": text, "generated": coach.now_stamp(), "model": p["ollama_model"], "question": question}
-    if not question:
-        _ai_cache.clear()
-        _ai_cache[cache_key] = result
-    return result
+    return {"configured": ai.configured(settings, p), "provider": p["ai_provider"],
+            "insight": ai.stored_insight(db), "today": date.today().isoformat()}
 
 
-@app.post("/api/coach/ai/test")
-def coach_ai_test(body: AiTestIn):
+@app.post("/api/insight/refresh")
+def refresh_insight():
     try:
-        url = prefs.validate({"ollama_url": body.url})["ollama_url"]
-    except prefs.PrefError as e:
-        raise HTTPException(422, str(e)) from e
-    if not url:
-        raise HTTPException(422, "Enter the Ollama address first.")
+        return {"insight": ai.generate_insight(settings, db, reason="manual")}
+    except ai.AIError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@app.post("/api/insight/ask")
+def ask_coach(body: AskIn):
     try:
-        models = coach.ollama_models(url)
-    except Exception as e:
-        raise HTTPException(502, f"Couldn't reach Ollama at that address ({type(e).__name__}).") from e
-    return {"models": models}
+        return ai.ask(settings, db, body.question.strip())
+    except ai.AIError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@app.post("/api/ai/key")
+def save_ai_key(request: Request, body: AiKeyIn):
+    key = body.key.strip()
+    if any(c.isspace() for c in key):
+        raise HTTPException(422, "Paste the key exactly as the provider showed it.")
+    stamp = ai_limiter.try_begin(_client_ip(request))
+    if stamp is None:
+        raise HTTPException(429, "Too many attempts. Wait 15 minutes.")
+    try:
+        models = ai.list_models(body.provider, key)
+    except ai.AIError as e:
+        raise HTTPException(400, str(e)) from e
+    ai_limiter.success(_client_ip(request), stamp)
+    ai.save_key(settings, body.provider, key)
+    return {"ok": True, "models": models, "suggested": ai.suggest_model(body.provider, models)}
+
+
+@app.post("/api/ai/key/remove")
+def remove_ai_key(body: AiModelsIn):
+    if body.provider in ("claude", "gemini", "openai"):
+        ai.remove_key(settings, body.provider)
+    return {"ok": True}
+
+
+@app.post("/api/ai/models")
+def ai_models(body: AiModelsIn):
+    if body.provider == "ollama":
+        try:
+            url = prefs.validate({"ollama_url": body.url or ""})["ollama_url"]
+        except prefs.PrefError as e:
+            raise HTTPException(422, str(e)) from e
+        if not url:
+            raise HTTPException(422, "Enter the Ollama address first.")
+        key = None
+    else:
+        url, key = None, ai.get_key(settings, body.provider)
+        if not key:
+            raise HTTPException(400, "Save an API key for this provider first.")
+    try:
+        models = ai.list_models(body.provider, key, url)
+    except ai.AIError as e:
+        raise HTTPException(502, str(e)) from e
+    return {"models": models, "suggested": ai.suggest_model(body.provider, models)}
+
+
+# ------------------------------------------------------------------ Discord
+@app.post("/api/notify/webhook")
+def save_webhook(request: Request, body: WebhookIn):
+    url = body.url.strip()
+    if not notify.WEBHOOK_RE.match(url):
+        raise HTTPException(422, "That isn't a Discord webhook link. It starts with https://discord.com/api/webhooks/")
+    stamp = ai_limiter.try_begin(_client_ip(request))
+    if stamp is None:
+        raise HTTPException(429, "Too many attempts. Wait 15 minutes.")
+    try:
+        notify.send(settings, "morning", "Connected", ["Garmin Dashboard will post your notifications here."], url=url)
+    except notify.NotifyError as e:
+        raise HTTPException(400, str(e)) from e
+    ai_limiter.success(_client_ip(request), stamp)
+    notify.save_webhook(settings, url)
+    return {"ok": True}
+
+
+@app.post("/api/notify/webhook/remove")
+def remove_webhook():
+    notify.remove_webhook(settings)
+    return {"ok": True}
+
+
+@app.post("/api/notify/test")
+def test_notify():
+    try:
+        notify.morning(settings, db)
+    except notify.NotifyError as e:
+        raise HTTPException(400, str(e)) from e
+    return {"ok": True}
 
 
 # ------------------------------------------------------------------ pages

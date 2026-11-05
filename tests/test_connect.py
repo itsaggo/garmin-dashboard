@@ -74,6 +74,17 @@ class FakeGarmin:
         return [{"calendarDate": end, "timestampLocal": f"{end}T06:30:00", "score": 72, "level": "HIGH",
                  "recoveryTime": 600, "inputContext": "AFTER_WAKEUP_RESET"}]
 
+    def get_race_predictions(self, start, end, _type):
+        FakeGarmin.calls.append(("pred", start, end, _type))
+        return [{"calendarDate": end, "time5K": 1500, "time10K": 3130, "timeHalfMarathon": 6950, "timeMarathon": 14600}]
+
+    def get_rhr_daily(self, start, end):
+        FakeGarmin.calls.append(("rhr", start, end))
+        return [{"calendarDate": end, "value": 51}]
+
+    def get_userprofile_settings(self):
+        return {"userData": {"gender": "MALE", "birthDate": "1996-05-02"}}
+
     def get_training_status(self, cdate):
         FakeGarmin.calls.append(("status", cdate))
         if cdate == d(1):

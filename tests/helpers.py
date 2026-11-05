@@ -15,12 +15,16 @@ def reset():
     for f in (s.account_file, s.password_file, s.api_key_file):
         f.unlink(missing_ok=True)
     main.db.session_delete_all()
-    for k in ("prefs", "setup_done"):
+    main.db.wipe_garmin_data()  # every test starts with no synced data
+    for k in ("prefs", "setup_done", "insight", "insight_attempt", "ai_usage", "profile", "notify_sent"):
         main.db.delete_meta(k)
+    (s.secrets_dir / "discord-webhook").unlink(missing_ok=True)
+    for prov in ("claude", "gemini", "openai"):
+        (s.secrets_dir / f"ai-key-{prov}").unlink(missing_ok=True)
     main.limiter = auth.LoginLimiter()
     main.garmin_limiter = auth.LoginLimiter(per_ip=5, total=8)
     main._last_manual_sync = 0.0
-    main._ai_cache.clear()
+    main.ai_limiter = auth.LoginLimiter(per_ip=10, total=20)
 
 
 def client():

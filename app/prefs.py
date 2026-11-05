@@ -16,23 +16,64 @@ from .db import Database
 
 RACE_DISTANCES_KM = {"5k": 5.0, "10k": 10.0, "half": 21.0975, "marathon": 42.195}
 
+# Dashboard boxes: id -> (title, default section, default width of 12, default height in rows)
+WIDGETS: dict[str, tuple[str, str, int, int]] = {
+    "fitness": ("Fitness score", "main", 4, 6),
+    "coach": ("AI coach", "main", 8, 6),
+    "vo2": ("VO2 max", "main", 3, 4),
+    "readiness": ("Training readiness", "main", 3, 4),
+    "sleep": ("Sleep score", "main", 3, 4),
+    "five_k": ("5K estimate", "main", 3, 4),
+    "race": ("Goal race", "main", 6, 3),
+    "weekly_run": ("Weekly running", "main", 6, 4),
+    "fitness_trend": ("Fitness score trend", "details", 6, 4),
+    "rhr": ("Resting heart rate", "details", 6, 4),
+    "hrv": ("HRV", "details", 6, 4),
+    "sleep_stages": ("Sleep stages", "details", 6, 4),
+    "body_battery": ("Body Battery", "details", 6, 4),
+    "steps": ("Steps", "details", 6, 4),
+    "stress": ("Stress", "details", 6, 4),
+    "training_load": ("Training load", "details", 6, 4),
+    "weekly_ride": ("Weekly cycling", "details", 6, 4),
+    "activities": ("Recent activities", "details", 12, 6),
+}
+SECTIONS = ("main", "details", "hidden")
+
+
+def default_layout() -> list[dict]:
+    return [{"id": k, "section": sec, "w": w, "h": h} for k, (_, sec, w, h) in WIDGETS.items()]
+
+
+def complete_layout(items: list[dict] | None) -> list[dict]:
+    """Saved layout plus any boxes added in newer versions (in their default spots)."""
+    items = [dict(i) for i in (items or []) if i.get("id") in WIDGETS]
+    seen = {i["id"] for i in items}
+    return items + [i for i in default_layout() if i["id"] not in seen]
+
+
 DEFAULTS: dict[str, Any] = {
     "units": "imperial",
     "timezone": "America/Chicago",
     "theme": "auto",
+    "race_enabled": False,
     "race_name": "",
     "race_date": "",
     "race_distance": "half",
     "race_custom_km": None,
     "race_goal_time": "",
     "include_cycling": True,
-    "ai_enabled": False,
+    "ai_provider": "none",
+    "ai_model": "",
     "ollama_url": "",
-    "ollama_model": "",
+    "layout": None,
+    "notify_morning": True,
+    "notify_weekly": True,
+    "notify_problems": True,
 }
+AI_PROVIDERS = ("none", "claude", "gemini", "openai", "ollama")
 
 _GOAL_RE = re.compile(r"^(\d{1,2}):([0-5]\d):([0-5]\d)$")
-_MODEL_RE = re.compile(r"^[A-Za-z0-9._:/-]{1,100}$")
+_MODEL_RE = re.compile(r"^[A-Za-z0-9._:/-]{1,120}$")
 
 
 class PrefError(ValueError):
@@ -60,13 +101,21 @@ def _env_defaults() -> dict[str, Any]:
 def get_all(db: Database) -> dict[str, Any]:
     prefs = {**DEFAULTS, **_env_defaults()}
     raw = db.get_meta("prefs")
+    stored: dict = {}
     if raw:
         try:
             stored = json.loads(raw)
-            if isinstance(stored, dict):
-                prefs.update({k: v for k, v in stored.items() if k in DEFAULTS})
+            if not isinstance(stored, dict):
+                stored = {}
         except ValueError:
-            pass
+            stored = {}
+    prefs.update({k: v for k, v in stored.items() if k in DEFAULTS})
+    # v1.1 → v1.2 migrations
+    if "race_enabled" not in stored and prefs.get("race_date"):
+        prefs["race_enabled"] = True
+    if "ai_provider" not in stored and stored.get("ai_enabled") and stored.get("ollama_url") and stored.get("ollama_model"):
+        prefs["ai_provider"], prefs["ai_model"] = "ollama", stored["ollama_model"]
+    prefs["layout"] = complete_layout(prefs.get("layout"))
     return prefs
 
 
@@ -131,9 +180,14 @@ def validate(changes: dict[str, Any]) -> dict[str, Any]:
             value = str(value or "").strip()
             if value and goal_seconds(value) is None:
                 raise PrefError(key, "Use hours:minutes:seconds, like 2:05:00.")
-        elif key in ("include_cycling", "ai_enabled"):
+        elif key in ("include_cycling", "race_enabled", "notify_morning", "notify_weekly", "notify_problems"):
             if not isinstance(value, bool):
                 raise PrefError(key, "Must be on or off.")
+        elif key == "ai_provider":
+            if value not in AI_PROVIDERS:
+                raise PrefError(key, "Choose an AI provider.")
+        elif key == "layout":
+            value = validate_layout(value)
         elif key == "ollama_url":
             value = str(value or "").strip().rstrip("/")
             if value:
@@ -141,12 +195,30 @@ def validate(changes: dict[str, Any]) -> dict[str, Any]:
                 if parts.scheme not in ("http", "https") or not parts.hostname or parts.username or parts.password \
                         or parts.query or parts.fragment or len(value) > 200:
                     raise PrefError(key, "Use an address like http://192.168.4.23:11434")
-        elif key == "ollama_model":
+        elif key == "ai_model":
             value = str(value or "").strip()
             if value and not _MODEL_RE.match(value):
-                raise PrefError(key, "Model names look like llama3.1:8b")
+                raise PrefError(key, "That doesn't look like a model name.")
         out[key] = value
     return out
+
+
+def validate_layout(value: Any) -> list[dict]:
+    if not isinstance(value, list) or len(value) > 60:
+        raise PrefError("layout", "Invalid layout.")
+    out, seen = [], set()
+    for item in value:
+        if not isinstance(item, dict):
+            raise PrefError("layout", "Invalid layout.")
+        wid, sec, w, h = item.get("id"), item.get("section"), item.get("w"), item.get("h")
+        if wid not in WIDGETS or wid in seen or sec not in SECTIONS:
+            raise PrefError("layout", "Invalid layout.")
+        if isinstance(w, bool) or isinstance(h, bool) or not isinstance(w, int) or not isinstance(h, int) \
+                or not 2 <= w <= 12 or not 2 <= h <= 12:
+            raise PrefError("layout", "Box sizes must be 2–12 columns wide and 2–12 rows tall.")
+        seen.add(wid)
+        out.append({"id": wid, "section": sec, "w": w, "h": h})
+    return complete_layout(out)
 
 
 def update(db: Database, changes: dict[str, Any]) -> dict[str, Any]:

@@ -6,9 +6,12 @@ A private, self-hosted dashboard for your own Garmin data.
   HRV, Body Battery, stress and activities.
 - **Optional Garmin Connect sign-in** adds what the official API leaves out:
   VO2 max, training status, training readiness, recovery time and training load.
-- **A built-in coach** gives a daily recommendation, goal-race pace and taper
-  guidance, and a weekly check-in, all computed on your server. You can also
-  connect a local AI model (Ollama) for written notes and questions.
+- **A fitness score (1–100)** built from VO2 max, recovery, training balance
+  and consistency, with a history chart and what moved it this week.
+- **An AI coach**: connect Claude, Gemini, ChatGPT or a local Ollama model and
+  get a written insight every morning, plus a box to ask it questions.
+- **A dashboard you arrange yourself**: drag boxes between the main page, the
+  Details tab and Hidden, and resize them. It has a phone layout with a bottom tab bar.
 
 Everything stays on your server. The only things sent anywhere are the
 requests to Garmin that fetch your data.
@@ -73,10 +76,14 @@ Your data, password and Garmin sign-ins are kept.
 
 Everything is in the dashboard's **Settings** page:
 
-- **Goal race, units, time zone and theme**, and whether to show cycling.
+- **Race switch:** turn on "Training for a race" to set a name, date, distance
+  and goal time. Off hides all of it.
+- **Units, time zone and theme**, and whether to show cycling.
 - **Garmin connections:** replace an expired API key, or sign in to Garmin Connect
   again or disconnect it.
-- **AI coach:** connect a local Ollama model (see below).
+- **AI coach:** Claude, Gemini, ChatGPT or local Ollama (see below).
+- **Customize:** arrange and resize the dashboard boxes (see below).
+- **Notifications:** Discord morning insight, weekly summary and warnings (see below).
 - **Account:** change your password, or sign out other devices.
 - **Your data:** download everything as a file, delete stored Garmin data, or
   delete everything and start over.
@@ -93,29 +100,75 @@ and the Garmin Connect sign-in (typically after months). When either lapses, the
 dashboard shows a banner, you renew it in Settings, and the other data source
 keeps working meanwhile.
 
-## The coach
+## Fitness score
 
-The **Today** card makes one call, *Rest*, *Easy day*, *Normal training* or
-*Good day for a hard workout*, and lists the reasons behind it. The reasons come
-from your HRV and resting heart rate compared with your own normal, your sleep,
-Body Battery, readiness, yesterday's run, and how this week's load compares with
-the last four. The **Goal race** card shows the pace your goal needs, a
-current-fitness estimate from your fastest recent runs, and the training phase
-(base, build, peak, taper, race week). The **Weekly check-in** compares last
-week with the one before and suggests a target for this week. It needs about
-three weeks of data before "your normal" comparisons mean much.
+A 1–100 score built from four parts. Each part is shown, along with what changed since last week.
 
-It's training guidance, not medical advice. If your resting heart rate stays
-high for days, it tells you to rest and see a doctor.
+| Part | Weight | What it uses |
+|---|---|---|
+| Engine | 35% | VO2 max compared with norms for your age and sex. Without Connect, VO2 max is estimated from your 5K. |
+| Recovery | 25% | HRV and resting heart rate against your own 30-day normal, plus sleep score, readiness and Body Battery |
+| Consistency | 25% | Active weeks out of the last 8, days you hit your step goal, and weekly intensity minutes against the recommended 150 |
+| Training balance | 15% | This week's load compared with your usual. The sweet spot is 0.8–1.3× |
 
-**Optional local AI:** install [Ollama](https://ollama.com) on a machine on
-your network (for example as an Unraid container) and pull a model
-(`ollama pull llama3.1:8b`). Then in **Settings → AI coach**, enter its address
-(e.g. `http://192.168.4.23:11434`), click **Test connection**, pick the model and
-save. The dashboard then gets a *Get today's note* button and a question box.
-Only a short summary of the coach's numbers is sent, and only to that address.
+Bands: 85+ Peak · 70+ Strong · 55+ Solid · 40+ Building · below 40 Recharge.
+It needs about 3 weeks of data before "your normal" means much.
 
----
+## AI coach
+
+In **Settings → AI coach**, pick a provider and either paste an API key or
+enter your Ollama address. Then choose a model and save.
+
+- **Claude:** key from console.anthropic.com
+- **Gemini:** key from aistudio.google.com
+- **ChatGPT:** key from platform.openai.com
+- **Local:** an Ollama server on your network, e.g. `http://192.168.4.23:11434`.
+  Use the server's LAN IP, not `localhost`.
+
+Each morning after 6 a.m., after a fresh sync, the coach writes a short insight.
+You can also ask it questions on the dashboard.
+
+What it sends and costs:
+- **Only a name-free summary** of your numbers goes to the provider: scores,
+  trends, recent activities and your goal race.
+- **Your API key stays private.** It's stored like your Garmin key and is never
+  shown again.
+- **Cloud providers bill you directly**, roughly a cent per insight. The
+  dashboard caps use at 8 rewrites and 30 questions a day.
+
+It's training guidance, not medical advice.
+
+## Discord notifications
+
+To set it up:
+1. In Discord, open the channel you want and choose **Edit Channel →
+   Integrations → Webhooks → New Webhook → Copy Webhook URL**.
+2. Paste it in **Settings → Notifications** and click **Save & send test**.
+
+Then pick which messages it sends:
+- **Morning insight**, around 7 a.m.: the AI coach's note plus your fitness
+  score, readiness, sleep, VO2 max, 5K and race countdown. If the AI coach is
+  on, it waits until 9 a.m. at the latest for that day's insight.
+- **Weekly summary**, Monday morning: last week's workouts, mileage and change
+  in fitness score.
+- **Problems & warnings:** a failed sync, an expired Garmin key or sign-in, no
+  sync for over a day, or resting heart rate 5+ bpm above your normal for 3
+  days. Each problem is sent once, not repeatedly.
+
+The webhook link is stored privately, like your other keys. Messages never
+ping anyone. They do contain your health numbers, so use a private channel or
+server.
+
+## Customize
+
+**Settings → Customize** shows every box in three areas: **Main page**,
+**Details tab** and **Hidden**. To arrange them:
+- **Move a box:** drag it to another spot or area.
+- **Resize a box:** drag its bottom-right corner.
+- **Use the keyboard instead:** focus a box, then arrows resize it and Alt+arrows reorder it.
+
+Press **Save layout** when you're done, or **Reset to default** to start over.
+On a phone, boxes stack full-width in the same order.
 
 ## Security
 
@@ -261,7 +314,9 @@ app/
   setup.py     terminal fallback (password reset etc.)
   prefs.py     Settings-page preferences (validated)
   garmin_login.py  Garmin Connect sign-in incl. two-factor (web and terminal)
-  coach.py     built-in coach rules + optional Ollama
+  fitness.py   fitness score, 5K estimate, facts for the AI coach
+  ai.py        AI providers (Claude, Gemini, ChatGPT, Ollama), daily insight, caps
+  notify.py    Discord webhook notifications
   sync.py      official Personal API sync (chunked ranges, backoff, token refresh)
   connect.py   optional Garmin Connect sync (VO2 max, training status, readiness)
   extract.py   Garmin JSON → tidy rows

@@ -3,16 +3,13 @@ import json
 import os
 import re
 import stat
-import threading
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, timedelta
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import garminconnect
 import pytest
 
-from app import auth, coach, main, prefs
+from app import auth, main, prefs
 from tests.helpers import JSON, ORIGIN, PASSWORD, USER, client as new_client, login, make_account, reset
 from tests.test_connect import FakeGarmin
 
@@ -92,7 +89,8 @@ def test_prefs_defaults_are_houston():
     ("units", "furlongs"), ("timezone", "Mars/Olympus"), ("theme", "neon"), ("race_date", "next week"),
     ("race_distance", "ultra"), ("race_custom_km", 9999), ("race_goal_time", "2 hours"),
     ("include_cycling", "yes"), ("ollama_url", "file:///etc/passwd"), ("ollama_url", "http://user:pw@host"),
-    ("ollama_model", "bad model; rm"), ("race_name", "x" * 81), ("not_a_setting", 1),
+    ("ai_model", "bad model; rm"), ("ai_provider", "skynet"), ("race_enabled", "yes"), ("layout", "big"),
+    ("race_name", "x" * 81), ("not_a_setting", 1),
 ])
 def test_bad_prefs_rejected(signed_in, field, value):
     r = signed_in.post("/api/settings", json={"values": {field: value}}, headers=JSON)
@@ -100,7 +98,7 @@ def test_bad_prefs_rejected(signed_in, field, value):
 
 
 def test_prefs_save_and_timezone_applies(signed_in):
-    vals = {"units": "metric", "timezone": "Europe/London", "theme": "dark", "race_name": "New Orleans Half",
+    vals = {"units": "metric", "timezone": "Europe/London", "theme": "dark", "race_enabled": True, "race_name": "New Orleans Half",
             "race_date": "2026-11-14", "race_distance": "half", "race_goal_time": "2:05:00", "include_cycling": False}
     r = signed_in.post("/api/settings", json={"values": vals}, headers=JSON)
     assert r.status_code == 200 and r.json()["prefs"]["units"] == "metric"
@@ -245,139 +243,3 @@ def test_pages_have_no_inline_code(name):
     assert not re.search(r"\sstyle=", html), "inline style attribute"
 
 
-# ------------------------------------------------------------------ coach rules
-TODAY = date(2026, 11, 4)
-
-
-def _seed(db, days=40, rhr=52, hrv=60, runs=True):
-    for i in range(days):
-        d = (TODAY - timedelta(days=i)).isoformat()
-        db.upsert_daily(d, {"resting_hr": rhr, "hrv_last_night": hrv, "sleep_s": 7.5 * 3600, "bb_high": 85})
-    if runs:
-        for i in range(2, days, 2):
-            d = (TODAY - timedelta(days=i)).isoformat()
-            km = 12 if i % 7 == 0 else 6
-            pace = 330 if i % 6 == 0 else 375  # some ~5:30/km efforts, mostly 6:15/km
-            db.upsert_activity(100000 + i, {"start_local": f"{d} 06:30:00", "name": "Run", "type": "running",
-                                            "distance_m": km * 1000, "duration_s": km * pace}, {})
-
-
-@pytest.fixture()
-def cdb(tmp_path):
-    from app.db import Database
-    db = Database(tmp_path / "coach.db")
-    prefs.update(db, {"race_name": "New Orleans Half", "race_date": (TODAY + timedelta(days=10)).isoformat(),
-                      "race_distance": "half", "race_goal_time": "2:05:00"})
-    return db
-
-
-def test_coach_normal_day_and_race_card(cdb):
-    _seed(cdb)
-    a = coach.analyze(cdb, today=TODAY)
-    assert a["today"]["call"] in ("normal", "hard_ok", "easy")
-    race = a["race"]
-    assert race["days_to_go"] == 10 and race["phase_key"] == "taper"
-    assert race["goal_pace"] == "9:32/mi"  # 2:05:00 over 13.1 mi
-    assert race["estimate"] and any("point to about" in line for line in race["lines"])
-    assert a["week"]["suggestion"].startswith("Aim for about")
-
-
-def test_coach_rest_when_resting_hr_high_three_days(cdb):
-    _seed(cdb)
-    for i in range(3):
-        cdb.upsert_daily((TODAY - timedelta(days=i)).isoformat(), {"resting_hr": 60})
-    t = coach.analyze(cdb, today=TODAY)["today"]
-    assert t["call"] == "rest" and any("Resting heart rate" in r for r in t["reasons"])
-    assert "doctor" in t["advice"]
-
-
-def test_coach_easy_when_hrv_low_and_short_sleep(cdb):
-    _seed(cdb)
-    cdb.upsert_daily(TODAY.isoformat(), {"hrv_last_night": 45, "sleep_s": 5 * 3600})
-    t = coach.analyze(cdb, today=TODAY)["today"]
-    assert t["call"] == "easy" and any("HRV" in r for r in t["reasons"]) and any("sleep" in r.lower() for r in t["reasons"])
-
-
-def test_coach_race_day_and_past_race(cdb):
-    _seed(cdb, runs=False)
-    prefs.update(cdb, {"race_date": TODAY.isoformat()})
-    assert coach.analyze(cdb, today=TODAY)["today"]["call"] == "race"
-    prefs.update(cdb, {"race_date": (TODAY - timedelta(days=3)).isoformat()})
-    assert coach.analyze(cdb, today=TODAY)["race"]["phase_key"] == "done"
-
-
-def test_coach_handles_empty_database(tmp_path):
-    from app.db import Database
-    a = coach.analyze(Database(tmp_path / "empty.db"), today=TODAY)
-    assert a["today"]["call"] in ("normal", "hard_ok") and a["race"] is None and a["data_days"] == 0
-
-
-def test_coach_phases():
-    assert coach._phase(100, 21.1)[0] == "base"
-    assert coach._phase(50, 21.1)[0] == "build"
-    assert coach._phase(30, 21.1)[0] == "peak"
-    assert coach._phase(10, 21.1)[0] == "taper"
-    assert coach._phase(5, 21.1)[0] == "race_week"
-    assert coach._phase(18, 42.2)[0] == "taper"  # marathon tapers longer
-
-
-def test_riegel_estimate():
-    runs = [{"start_local": "2026-11-01 06:00:00", "distance_m": 10000, "duration_s": 3000, "type": "running"}] * 3
-    est = coach._fitness_estimate(runs, 21.0975, TODAY)
-    assert 6550 < est["seconds"] < 6650 and est["confident"]  # 50:00 10K → about 1:50 half
-
-
-# ------------------------------------------------------------------ Ollama
-class _Ollama(BaseHTTPRequestHandler):
-    seen: list = []
-
-    def log_message(self, *a):
-        pass
-
-    def _send(self, body):
-        data = json.dumps(body).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
-    def do_GET(self):
-        self._send({"models": [{"name": "llama3.1:8b"}, {"name": "qwen2.5:7b"}]})
-
-    def do_POST(self):
-        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-        _Ollama.seen.append(body)
-        self._send({"message": {"role": "assistant", "content": "Easy 3 miles today. <script>alert(1)</script>"}})
-
-
-@pytest.fixture()
-def ollama():
-    srv = HTTPServer(("127.0.0.1", 0), _Ollama)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    _Ollama.seen = []
-    yield f"http://127.0.0.1:{srv.server_address[1]}"
-    srv.shutdown()
-
-
-def test_ollama_test_and_note(signed_in, ollama):
-    r = signed_in.post("/api/coach/ai/test", json={"url": ollama}, headers=JSON)
-    assert r.json()["models"] == ["llama3.1:8b", "qwen2.5:7b"]
-    assert signed_in.post("/api/coach/ai", json={}, headers=JSON).status_code == 400  # not enabled yet
-    signed_in.post("/api/settings", json={"values": {"ai_enabled": True, "ollama_url": ollama,
-                                                     "ollama_model": "llama3.1:8b"}}, headers=JSON)
-    note = signed_in.post("/api/coach/ai", json={}, headers=JSON).json()
-    assert note["text"].startswith("Easy 3 miles") and note["model"] == "llama3.1:8b"
-    sent = _Ollama.seen[-1]
-    assert sent["model"] == "llama3.1:8b" and sent["stream"] is False
-    assert "not medical advice" in sent["messages"][0]["content"]
-    signed_in.post("/api/coach/ai", json={}, headers=JSON)
-    assert len(_Ollama.seen) == 1  # today's note is cached
-    q = signed_in.post("/api/coach/ai", json={"question": "Should I run tomorrow?"}, headers=JSON).json()
-    assert q["question"] == "Should I run tomorrow?" and len(_Ollama.seen) == 2
-
-
-def test_ollama_unreachable_is_a_clear_error(signed_in):
-    r = signed_in.post("/api/coach/ai/test", json={"url": "http://127.0.0.1:1"}, headers=JSON)
-    assert r.status_code == 502 and "Couldn't reach Ollama" in r.json()["detail"]
-    assert signed_in.post("/api/coach/ai/test", json={"url": "ftp://x"}, headers=JSON).status_code == 422

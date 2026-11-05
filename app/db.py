@@ -31,6 +31,7 @@ TRAINING_COLUMNS = [
     "training_status", "acute_load", "chronic_load", "acwr", "acwr_status", "load_balance",
     "readiness_score", "readiness_level", "readiness_feedback",
     "recovery_min", "readiness_time",
+    "race_5k_s", "race_10k_s", "race_half_s", "race_marathon_s",
 ]
 
 ACTIVITY_COLUMNS = [
@@ -83,6 +84,12 @@ class Database:
         self.path = path
         with self.connect() as con:
             con.executescript(SCHEMA)
+            # Add columns introduced by newer versions to existing databases.
+            for table, cols in (("daily", DAILY_COLUMNS), ("training", TRAINING_COLUMNS)):
+                have = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+                for c in cols:
+                    if c not in have:
+                        con.execute(f"ALTER TABLE {table} ADD COLUMN {c} {'TEXT' if c in TEXT_COLUMNS else 'REAL'}")
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:

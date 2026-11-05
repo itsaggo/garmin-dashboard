@@ -146,6 +146,30 @@ class GarminSync:
             day += timedelta(days=1)
         self.notes.append(f"sleep (per-day fallback): {n} days")
 
+    RHR_PER_SYNC = 60
+
+    def fill_resting_hr(self, start: date, end: date) -> None:
+        """Resting heart rate isn't in every daily summary; the per-day heart-rate data has it.
+        Fetches only days that are still missing it, newest first, a limited number per sync."""
+        have = {r["date"]: r for r in self.db.rows_since("daily", start.isoformat())}
+        missing = [d for d, r in sorted(have.items(), reverse=True) if r.get("resting_hr") is None and d <= end.isoformat()]
+        filled = 0
+        for i, day in enumerate(missing[: self.RHR_PER_SYNC]):
+            try:
+                body = self.call(self.client.get_daily_heart_rate, day)
+            except HttpError as e:
+                if e.status_code in (403, 404):
+                    break  # endpoint not available for this account
+                continue
+            if i == 0 and isinstance(body, dict):  # keep one trimmed sample for the Raw data page
+                self.db.save_raw("heart_rate", "latest", {k: v for k, v in body.items() if not isinstance(v, list)})
+            for d, row in extract.heart_rate_day(body):
+                if row.get("resting_hr"):
+                    self.db.upsert_daily(d, row)
+                    filled += d == day
+        if missing:
+            self.notes.append(f"resting HR: {filled} of {min(len(missing), self.RHR_PER_SYNC)} days")
+
     def sync_activities(self, start: date, end: date) -> None:
         page, limit, stored = 0, 50, 0
         while True:
@@ -175,11 +199,18 @@ class GarminSync:
         log.info("Syncing %s → %s (%s)", start, today, "backfill" if days > self.s.refresh_days else "incremental")
 
         try:
-            self.db.save_raw("profile_settings", "latest", self.call(self.client.get_user_profile_settings))
+            prof = self.call(self.client.get_user_profile_settings)
+            self.db.save_raw("profile_settings", "latest", prof)
+            save_profile(self.db, extract.profile(prof))
         except Exception as e:
             log.warning("profile settings: %s", e)
 
         self.sync_daily(start, today)
+        try:
+            self.fill_resting_hr(start, today)
+        except Exception as e:
+            log.exception("resting heart rate fill failed")
+            self.notes.append(f"resting HR: FAILED ({e})")
         try:
             act_start = start
             latest = self.db.latest_activity_date()
@@ -194,6 +225,18 @@ class GarminSync:
         if (first_run or full) and not any("FAILED" in n for n in self.notes):
             self.db.set_meta("backfilled", today.isoformat())
         return "; ".join(self.notes)
+
+
+def save_profile(db: Database, found: dict) -> None:
+    if not found:
+        return
+    import json
+    try:
+        current = json.loads(db.get_meta("profile") or "{}")
+    except ValueError:
+        current = {}
+    current.update(found)
+    db.set_meta("profile", json.dumps(current))
 
 
 def _lock_path(settings: config.Settings) -> str:

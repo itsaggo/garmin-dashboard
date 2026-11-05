@@ -91,7 +91,9 @@
         <label class="check"><input type="checkbox" name="include_cycling"> Show cycling too</label>
       </div>
       <div class="fieldset">
-        <h3>Goal race <span class="muted-tag">optional, powers the coach</span></h3>
+        <div class="switch-row"><h3>Training for a race? <span class="muted-tag">optional</span></h3>
+          <label class="switch"><input type="checkbox" name="race_enabled" aria-label="Training for a race"><span></span></label></div>
+        <div id="raceFields" class="fieldset">
         <label>Race name <input name="race_name" maxlength="80" placeholder="New Orleans Half"></label>
         <label>Race date <input name="race_date" type="date"></label>
         <label>Distance
@@ -102,6 +104,7 @@
         </label>
         <label id="customKmRow" hidden>Distance in km <input name="race_custom_km" type="number" min="0.4" max="500" step="0.01"></label>
         <label>Goal time <input name="race_goal_time" placeholder="2:05:00" pattern="\d{1,2}:[0-5]\d:[0-5]\d" title="hours:minutes:seconds"></label>
+        </div>
       </div>
     </form>
     <p class="msg" id="prefsMsg"></p>
@@ -115,8 +118,8 @@
   <section class="card step" data-title="Done" hidden>
     <h2>4. All set</h2>
     <p>Your first sync pulls up to a year of history and takes a few minutes. Charts fill in as data arrives.</p>
-    <p>Want a coach that writes notes in plain English? Connect a local AI model (Ollama) any time under
-      <strong>Settings → AI coach</strong>.</p>
+    <p>Want a personal coach? Connect Claude, Gemini, ChatGPT or a local model under <strong>Settings → AI coach</strong>
+      and it writes you an insight every morning.</p>
     <div class="nav">
       <button type="button" class="btn" data-prev>← Back</button>
       <button type="button" class="btn primary" id="finishBtn">Go to my dashboard</button>

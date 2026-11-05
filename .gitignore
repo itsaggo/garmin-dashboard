@@ -1,0 +1,13 @@
+# Your settings and everything private: never commit these
+config.env
+data/
+*.db
+secrets/
+
+# Python / tooling
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+.vscode/

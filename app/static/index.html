@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="same-origin">
+  <title>Garmin Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="/static/favicon.svg">
+</head>
+<body>
+<main>
+  <header class="top">
+    <div>
+      <h1>Training Dashboard</h1>
+      <div class="sub" id="syncInfo">Loading…</div>
+    </div>
+    <div class="controls">
+      <div class="seg" id="range" role="group" aria-label="Date range">
+        <button type="button" data-days="30">30d</button>
+        <button type="button" data-days="90" aria-pressed="true">90d</button>
+        <button type="button" data-days="180">6m</button>
+        <button type="button" data-days="365">1y</button>
+      </div>
+      <button type="button" class="btn" id="syncBtn">Sync now</button>
+      <form method="post" action="/logout" class="inline"><button class="btn" type="submit">Sign out</button></form>
+    </div>
+  </header>
+
+  <div id="banners"></div>
+
+  <section class="tiles" id="tiles"></section>
+
+  <section id="trainingSection" hidden>
+    <h2 class="section">Training <span class="muted-tag">via Garmin Connect</span></h2>
+    <section class="tiles" id="trainingTiles"></section>
+    <section class="grid">
+      <div class="card">
+        <h2>VO2 max</h2>
+        <p class="note">ml/kg/min · running estimate</p>
+        <div class="chart-box"><canvas id="cVo2"></canvas></div>
+      </div>
+      <div class="card">
+        <h2>Training readiness</h2>
+        <p class="note">morning score (0–100)</p>
+        <div class="chart-box"><canvas id="cReady"></canvas></div>
+      </div>
+      <div class="card wide">
+        <h2>Training load</h2>
+        <p class="note">acute (7-day) vs chronic (28-day) load</p>
+        <div class="chart-box short"><canvas id="cLoad"></canvas></div>
+      </div>
+    </section>
+  </section>
+
+  <h2 class="section">Health &amp; activity</h2>
+  <section class="grid">
+    <div class="card">
+      <h2>Weekly running distance</h2>
+      <p class="note" id="weeklyNote">Monday-start weeks</p>
+      <div class="chart-box"><canvas id="cWeekly"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>Daily steps</h2>
+      <p class="note">Dashed line is your step goal</p>
+      <div class="chart-box"><canvas id="cSteps"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>Resting heart rate</h2>
+      <p class="note">bpm · daily value and 7-day average</p>
+      <div class="chart-box"><canvas id="cRhr"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>HRV</h2>
+      <p class="note">ms · overnight average and Garmin's 7-day average</p>
+      <div class="chart-box"><canvas id="cHrv"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>Sleep</h2>
+      <p class="note">hours per night by stage</p>
+      <div class="chart-box"><canvas id="cSleep"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>Body Battery</h2>
+      <p class="note">daily low → high range</p>
+      <div class="chart-box"><canvas id="cBB"></canvas></div>
+    </div>
+    <div class="card wide">
+      <h2>Average stress</h2>
+      <p class="note">Garmin all-day stress score (0–100)</p>
+      <div class="chart-box short"><canvas id="cStress"></canvas></div>
+    </div>
+    <div class="card wide">
+      <h2>Recent activities</h2>
+      <div class="table-wrap"><table id="acts"></table></div>
+    </div>
+  </section>
+
+  <footer>
+    <span id="counts"></span>
+    <a href="/raw">Raw API data</a>
+    <span>Data: Garmin Connect Personal API<span id="connectCredit"></span></span>
+  </footer>
+</main>
+<script src="/static/vendor/chart.umd.min.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

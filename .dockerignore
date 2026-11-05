@@ -1,0 +1,9 @@
+data/
+tests/
+**/__pycache__/
+.pytest_cache/
+*.pyc
+config.env
+README.md
+install.sh
+requirements.in

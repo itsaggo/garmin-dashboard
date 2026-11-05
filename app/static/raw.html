@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Raw Garmin Data</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="/static/favicon.svg">
+</head>
+<body>
+<main>
+  <header class="top">
+    <div>
+      <h1>Raw API data</h1>
+      <div class="sub">The latest response stored for each Garmin endpoint, so you can see real field names.</div>
+    </div>
+    <a class="btn" href="/">← Dashboard</a>
+  </header>
+  <div class="card"><div class="table-wrap"><table id="list"></table></div></div>
+  <h2 class="section" id="which"></h2>
+  <pre id="body">Pick an endpoint above.</pre>
+</main>
+<script src="/static/raw.js"></script>
+</body>
+</html>

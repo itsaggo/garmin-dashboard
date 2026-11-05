@@ -1,0 +1,39 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>garmin-dashboard</Name>
+  <Repository>ghcr.io/itsaggo/garmin-dashboard:latest</Repository>
+  <Registry>https://github.com/itsaggo/garmin-dashboard/pkgs/container/garmin-dashboard</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/itsaggo/garmin-dashboard/issues</Support>
+  <Project>https://github.com/itsaggo/garmin-dashboard</Project>
+  <Overview>Private, self-hosted dashboard for your own Garmin data: steps, resting heart rate, sleep, HRV, Body Battery, stress and activities from Garmin's official Personal API, plus optional VO2 max, training status, readiness and recovery time. After the first start, open the container's console (or the Unraid terminal) and run: docker exec -it garmin-dashboard python -m app.setup</Overview>
+  <Category>Tools: Status:Stable</Category>
+  <WebUI>http://[IP]:[PORT:8099]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/itsaggo/garmin-dashboard/main/unraid/garmin-dashboard.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/itsaggo/garmin-dashboard/main/unraid/icon.png</Icon>
+  <ExtraParams>--read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m --cap-drop ALL --cap-add CHOWN --cap-add SETUID --cap-add SETGID --security-opt no-new-privileges:true --pids-limit 256 --memory 768m</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Config Name="Web UI port" Target="8099" Default="8099" Mode="tcp" Description="Port the dashboard is served on." Type="Port" Display="always" Required="true" Mask="false">8099</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/garmin-dashboard/data" Mode="rw" Description="Database, secrets and Garmin sign-in token. Keep this private." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/garmin-dashboard/data</Config>
+  <Config Name="Time zone" Target="TZ" Default="America/Chicago" Mode="" Description="Your time zone (decides what 'today' is), e.g. America/Chicago." Type="Variable" Display="always" Required="true" Mask="false">America/Chicago</Config>
+  <Config Name="Units" Target="UNITS" Default="imperial|metric" Mode="" Description="imperial (mi, ft) or metric (km, m)." Type="Variable" Display="always" Required="true" Mask="false">imperial</Config>
+  <Config Name="Race name" Target="RACE_NAME" Default="" Mode="" Description="Optional countdown banner, e.g. New Orleans Half." Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="Race date" Target="RACE_DATE" Default="" Mode="" Description="Optional race date as YYYY-MM-DD." Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="Allowed host names" Target="ALLOWED_HOSTS" Default="" Mode="" Description="Names (not IPs) you open the dashboard by, comma-separated, e.g. tower,tower.local. Opening by IP always works." Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="Sync interval (hours)" Target="SYNC_INTERVAL_HOURS" Default="4" Mode="" Description="How often to pull new data from Garmin." Type="Variable" Display="advanced" Required="false" Mask="false">4</Config>
+  <Config Name="History on first sync (days)" Target="BACKFILL_DAYS" Default="365" Mode="" Description="How far back the first sync goes (official API)." Type="Variable" Display="advanced" Required="false" Mask="false">365</Config>
+  <Config Name="Training history on first sync (days)" Target="CONNECT_BACKFILL_DAYS" Default="90" Mode="" Description="How far back the first Garmin Connect sync goes (VO2 max, training status, readiness)." Type="Variable" Display="advanced" Required="false" Mask="false">90</Config>
+  <Config Name="Days re-checked each sync" Target="REFRESH_DAYS" Default="7" Mode="" Description="Recent days re-pulled on every sync (sleep and HRV finalize late)." Type="Variable" Display="advanced" Required="false" Mask="false">7</Config>
+  <Config Name="HTTPS reverse-proxy address" Target="ALLOWED_ORIGINS" Default="" Mode="" Description="Only if behind an HTTPS reverse proxy: its exact public address, e.g. https://garmin.example.com" Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="Secure cookies" Target="COOKIE_SECURE" Default="false|true" Mode="" Description="Set true only behind an HTTPS reverse proxy." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="User the app runs as (Unraid default: 99 = nobody)." Type="Variable" Display="advanced" Required="true" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Group the app runs as (Unraid default: 100 = users)." Type="Variable" Display="advanced" Required="true" Mask="false">100</Config>
+</Container>

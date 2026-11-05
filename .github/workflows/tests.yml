@@ -1,0 +1,26 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install locked dependencies (hash-checked)
+        run: pip install --require-hashes --no-deps -r requirements.lock
+      - name: Install test tools
+        run: pip install pytest httpx
+      - name: Run tests
+        run: python -m pytest -q tests
+      - name: Lint shell scripts
+        run: shellcheck install.sh && shellcheck -s sh entrypoint.sh

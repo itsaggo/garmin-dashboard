@@ -30,7 +30,7 @@ shows it only once. Keep it handy for step 4.
 Open the Unraid terminal (the `>_` icon, top right), paste this, and press Enter:
 
 ```bash
-wget -O /boot/config/plugins/dockerMan/templates-user/my-garmin-dashboard.xml https://raw.githubusercontent.com/YOUR-GITHUB-USERNAME/garmin-dashboard/main/unraid/garmin-dashboard.xml
+wget -O /boot/config/plugins/dockerMan/templates-user/my-garmin-dashboard.xml https://raw.githubusercontent.com/itsaggo/garmin-dashboard/main/unraid/garmin-dashboard.xml
 ```
 
 ### 3. Create the container
@@ -191,7 +191,7 @@ What it can't protect against, and what you should do:
   IP. Add that name to *Allowed host names* (container → Edit), or use the IP.
 - **Apply fails with "denied" or "not found" when pulling the image**: the image
   isn't public yet (see *Publishing* below), or the template still contains
-  `YOUR-GITHUB-USERNAME`.
+  `itsaggo`.
 - **A chart says "No data yet"**: open `/raw` in the dashboard to see exactly what
   Garmin sent. A field name Garmin hasn't documented may need adding to
   `app/extract.py`.
@@ -222,7 +222,7 @@ What it can't protect against, and what you should do:
 
 **First time:**
 
-1. Replace `YOUR-GITHUB-USERNAME` everywhere with your GitHub username in
+1. Replace `itsaggo` everywhere with your GitHub username in
    **lowercase**. The container registry requires lowercase.
 2. Push to GitHub.
 3. On GitHub: **Releases** → **Draft a new release** → tag `v1.0.0` → **Publish**.

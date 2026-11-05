@@ -1,19 +1,19 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>garmin-dashboard</Name>
-  <Repository>ghcr.io/YOUR-GITHUB-USERNAME/garmin-dashboard:latest</Repository>
-  <Registry>https://github.com/YOUR-GITHUB-USERNAME/garmin-dashboard/pkgs/container/garmin-dashboard</Registry>
+  <Repository>ghcr.io/itsaggo/garmin-dashboard:latest</Repository>
+  <Registry>https://github.com/itsaggo/garmin-dashboard/pkgs/container/garmin-dashboard</Registry>
   <Network>bridge</Network>
   <MyIP/>
   <Shell>bash</Shell>
   <Privileged>false</Privileged>
-  <Support>https://github.com/YOUR-GITHUB-USERNAME/garmin-dashboard/issues</Support>
-  <Project>https://github.com/YOUR-GITHUB-USERNAME/garmin-dashboard</Project>
+  <Support>https://github.com/itsaggo/garmin-dashboard/issues</Support>
+  <Project>https://github.com/itsaggo/garmin-dashboard</Project>
   <Overview>Private, self-hosted dashboard for your own Garmin data: steps, resting heart rate, sleep, HRV, Body Battery, stress and activities from Garmin's official Personal API, plus optional VO2 max, training status, readiness and recovery time. After the first start, open the WebUI: you'll create your login, then a short setup asks for your Garmin key. Race goals, units, time zone and the AI coach are in the dashboard's Settings.</Overview>
   <Category>Tools: Status:Stable</Category>
   <WebUI>http://[IP]:[PORT:8099]/</WebUI>
-  <TemplateURL>https://raw.githubusercontent.com/YOUR-GITHUB-USERNAME/garmin-dashboard/main/unraid/garmin-dashboard.xml</TemplateURL>
-  <Icon>https://raw.githubusercontent.com/YOUR-GITHUB-USERNAME/garmin-dashboard/main/unraid/icon.png</Icon>
+  <TemplateURL>https://raw.githubusercontent.com/itsaggo/garmin-dashboard/main/unraid/garmin-dashboard.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/itsaggo/garmin-dashboard/main/unraid/icon.png</Icon>
   <ExtraParams>--read-only --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m --cap-drop ALL --cap-add CHOWN --cap-add SETUID --cap-add SETGID --security-opt no-new-privileges:true --pids-limit 256 --memory 768m</ExtraParams>
   <PostArgs/>
   <CPUset/>

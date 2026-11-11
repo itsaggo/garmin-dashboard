@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.3.0
+
+- **Weather and heat-graded pace.** A new box beside the coach's note shows the weather for a city you pick
+  (Settings → General, Houston by default) and grades the heat with the temperature + dew point rule of thumb.
+  - Your easy, threshold and race-goal paces in cool weather, right now, and at the coolest hour of the next day.
+  - An hour-by-hour chart of how much the heat slows you down.
+  - The AI coach and the Discord morning message know today's heat too.
+  - Forecasts come from Open-Meteo: free, no account or key; only the place, rounded to about 1 km, is sent.
+- **Fitness score removed**, from the dashboard, the AI coach and Discord. If your saved layout had it, the
+  weather box takes its place and size.
+- **New look.** The dashboard now reads like a morning paper: your coach's note is the headline, and boxes are
+  separated by simple rules instead of cards.
+  - Headlines and numbers in Newsreader, text in Inter. Both fonts are served by the app itself, nothing loads from outside.
+  - Charts are drawn in one ink color, with the latest value marked in blue.
+  - Race box is a strip across the page: days to go, goal time and pace, Garmin's prediction and how far ahead or behind you are.
+  - Dark mode and the phone layout were redone to match.
+  - Newspaper-style motion: on first load the rules draw across the page and each section inks in, in reading
+    order, with the headline settling into focus and the big numbers counting up. Turned off automatically if
+    your device is set to reduce motion.
+- **New default layout.** The main page now also shows HRV, sleep stages and recent activities. If you've already
+  saved your own layout it stays as it is; use Settings → Customize → Reset to default to get the new one.
+- Labels from Garmin like "HIGH" or "PRODUCTIVE" now show as normal words.
+- Fixed: in Settings → Customize, short boxes (2 rows tall) lost their title.
+
 ## v1.2.0
 
 - **AI coach is now the main coach.** Connect Claude, Gemini, ChatGPT or a local Ollama model. It writes an

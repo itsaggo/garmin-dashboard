@@ -83,11 +83,14 @@ def send(s: config.Settings, kind: str, title: str, lines: list[str], fields: li
 # ------------------------------------------------------------------ message builders
 def _metrics(db: Database) -> list[tuple[str, str]]:
     f = fitness.facts(db)
-    fs = f["fitness_score"]
     fields = []
-    if fs["score"] is not None:
-        ch = fs.get("change_7d")
-        fields.append(("Fitness score", f"**{fs['score']}** {fs['tier']}" + (f" ({ch:+d} this week)" if ch else "")))
+    w = f.get("weather_now")
+    if w and w.get("temp_f") is not None and w.get("dew_point_f") is not None:
+        metric = f["units"] == "km"
+        t, dp = (w["temp_f"], w["dew_point_f"]) if not metric else ((w["temp_f"] - 32) * 5 / 9, (w["dew_point_f"] - 32) * 5 / 9)
+        u = "°C" if metric else "°F"
+        slow = w.get("slow_down_pct") or 0
+        fields.append(("Heat", f"**{t:.0f}{u}**, dew point {dp:.0f}{u} · " + (f"slow down ~{slow:g}%" if slow else "no adjustment")))
     tr = f["training_readiness"]
     if tr["today"] is not None:
         fields.append(("Readiness", f"**{tr['today']:.0f}**/100" + (f" · {tr['level']}" if tr.get("level") else "")))
@@ -126,8 +129,6 @@ def morning(s: config.Settings, db: Database) -> None:
 
 def weekly(s: config.Settings, db: Database) -> None:
     today = date.today()
-    ov = fitness.overview(db, 21, today)
-    hist = [h["score"] for h in ov["history"] if h["score"] is not None]
     acts = [a for a in db.activities(500) if a.get("start_local")]
     last_mon = today - timedelta(days=today.weekday() + 7)
 
@@ -144,9 +145,8 @@ def weekly(s: config.Settings, db: Database) -> None:
     change = f" ({(lw['run_m'] - pw['run_m']) / pw['run_m']:+.0%} vs the week before)" if pw["run_m"] else ""
     lines = [f"**{lw['n']} workouts**, {lw['mins'] / 60:.1f} h total",
              f"Running: {lw['runs']} runs, {lw['run_m'] / div:.1f} {unit}{change}"]
-    if len(hist) >= 8:
-        lines.append(f"Fitness score: {hist[-8]} → **{hist[-1]}** over the week")
-    send(s, "weekly", f"Week of {last_mon.strftime('%b')} {last_mon.day}: your recap", lines, _metrics(db)[1:])
+    send(s, "weekly", f"Week of {last_mon.strftime('%b')} {last_mon.day}: your recap", lines,
+         [m for m in _metrics(db) if m[0] != "Heat"])
 
 
 def problems(db: Database, s: config.Settings) -> list[tuple[str, str]]:

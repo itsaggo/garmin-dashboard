@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import ai, auth, config, fitness, garmin_login, notify, prefs, sync
+from . import ai, auth, config, fitness, garmin_login, notify, prefs, sync, weather
 from .db import Database
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -52,6 +52,11 @@ SECURITY_HEADERS = {
 
 # Paths reachable without signing in.
 PUBLIC_PATHS = {"/login", "/healthz", "/static/style.css", "/static/favicon.svg", "/static/theme.js"}
+# The sign-in page uses the same typefaces (plain font files, nothing personal).
+PUBLIC_PATHS |= {f"/static/vendor/fonts/{n}.woff2" for n in (
+    "inter-latin-400-normal", "inter-latin-500-normal", "inter-latin-600-normal",
+    "newsreader-latin-400-normal", "newsreader-latin-500-normal", "newsreader-latin-600-normal",
+    "newsreader-latin-400-italic")}
 # Before any account exists, only the create-account page (plus the above) is reachable.
 FIRST_RUN_PATHS = {"/welcome"}
 
@@ -93,6 +98,10 @@ def _scheduler() -> None:
                     log.info("Waiting for setup: open the dashboard in a browser to finish setup")
         except Exception:  # never let the scheduler thread die
             log.exception("Scheduled sync crashed; will retry at the next interval")
+        try:
+            weather.maybe_refresh(db)  # before the coach and Discord, so they see today's heat
+        except Exception:
+            log.exception("Weather refresh crashed")
         try:
             ai.maybe_daily(settings, db, lambda: sync.run_sync(settings, db))
         except ai.AIError as e:
@@ -645,6 +654,20 @@ def delete_data(request: Request, body: DeleteIn):
 @app.get("/api/overview")
 def get_overview(days: int = Query(90, ge=7, le=365)):
     return fitness.overview(db, days)
+
+
+@app.get("/api/weather")
+def get_weather():
+    """Current weather for the place in Settings, with your paces graded for heat."""
+    return weather.report(db, paces=fitness.training_paces(db))
+
+
+@app.get("/api/weather/places")
+def find_places(q: str = Query("", max_length=80)):
+    try:
+        return {"places": weather.places(q)}
+    except weather.WeatherError as e:
+        raise HTTPException(400, str(e)) from None
 
 
 @app.get("/api/insight")

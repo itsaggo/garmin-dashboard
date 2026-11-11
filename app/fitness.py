@@ -1,14 +1,6 @@
-"""Fitness score (1–100), headline metric series, and the fact sheet the AI coach reads.
+"""Headline metric series, training paces, the goal-race card, and the fact sheet the AI coach reads.
 
-The score blends four pillars, each 0–100, from your own data:
-
-  Engine        VO2 max against age/sex norms (or estimated from your 5K when VO2 max is missing)
-  Recovery      HRV and resting HR against your own 30-day normal, sleep score, readiness, Body Battery
-  Balance       this week's training load against your usual (acute:chronic ratio sweet spot 0.8–1.3)
-  Consistency   active weeks out of the last 8, step-goal days, weekly intensity minutes vs 150
-
-Weights: Engine 35 %, Recovery 25 %, Consistency 25 %, Balance 15 %. Missing pillars are
-left out and the rest re-weighted. Training guidance, not medical advice.
+Training guidance, not medical advice.
 """
 from __future__ import annotations
 
@@ -18,14 +10,13 @@ import statistics
 from datetime import date, timedelta
 from typing import Any
 
-from . import prefs as prefs_mod
+from . import prefs as prefs_mod, weather
 from .db import Database
 
 MI = 1.609344
 RIEGEL = 1.06
-WEIGHTS = {"engine": 0.35, "recovery": 0.25, "consistency": 0.25, "balance": 0.15}
-PILLAR_NAMES = {"engine": "Engine", "recovery": "Recovery", "balance": "Training balance", "consistency": "Consistency"}
-TIERS = [(85, "Peak"), (70, "Strong"), (55, "Solid"), (40, "Building"), (0, "Recharge")]
+# Daniels: easy running sits around 59–74 % of VDOT, threshold around 86–88 %.
+EASY_PCT, THRESHOLD_PCT = 0.65, 0.86
 
 # Approximate VO2 max 10th and 95th percentiles by sex and age decade (treadmill norms).
 _VO2_NORMS = {
@@ -41,21 +32,6 @@ def _d(iso: str) -> date:
 
 def _clamp(v: float, lo: float = 0, hi: float = 100) -> float:
     return max(lo, min(hi, v))
-
-
-def _interp(x: float, pts: list[tuple[float, float]]) -> float:
-    if x <= pts[0][0]:
-        return pts[0][1]
-    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
-        if x <= x1:
-            return y0 + (y1 - y0) * (x - x0) / (x1 - x0)
-    return pts[-1][1]
-
-
-def tier(score: float | None) -> str | None:
-    if score is None:
-        return None
-    return next(label for cut, label in TIERS if score >= cut)
 
 
 def fmt_duration(sec: float | None) -> str | None:
@@ -76,6 +52,16 @@ def vdot_from_race(dist_m: float, secs: float) -> float | None:
     vo2 = -4.6 + 0.182258 * v + 0.000104 * v * v
     pct = 0.8 + 0.1894393 * math.exp(-0.012778 * t) + 0.2989558 * math.exp(-0.1932605 * t)
     return vo2 / pct if pct else None
+
+
+def pace_for_vo2(vo2: float) -> float | None:
+    """Seconds per km at the running speed that costs this much oxygen (Daniels' cost curve)."""
+    a, b, c = 0.000104, 0.182258, -4.6 - vo2
+    disc = b * b - 4 * a * c
+    if vo2 <= 0 or disc <= 0:
+        return None
+    v = (-b + math.sqrt(disc)) / (2 * a)  # meters per minute
+    return 60000 / v if v > 0 else None
 
 
 def vo2_score(vo2: float | None, age: int | None, sex: str | None) -> float | None:
@@ -168,119 +154,28 @@ def five_k(data: Data, d: date) -> tuple[float | None, str | None]:
     return statistics.median(preds[:3]), "runs"
 
 
-# ------------------------------------------------------------------ pillars
-def _engine(data: Data, d: date) -> tuple[float | None, list[str], dict]:
-    vo2, when = data.last_known("training", "vo2max", d, 60)
-    source = "garmin"
-    if vo2 is None:
-        secs, _ = five_k(data, d)
-        vo2 = vdot_from_race(5000, secs) if secs else None
-        source = "5k"
-    score = vo2_score(vo2, data.age, data.sex)
-    notes = []
-    if score is not None:
-        notes.append(f"VO2 max {vo2:.1f}" + (" (estimated from your 5K)" if source == "5k" else "")
-                     + (f", for age {data.age}" if data.age else ""))
-    return score, notes, {"vo2max": round(vo2, 1) if vo2 else None, "vo2_source": source if vo2 else None}
+# ------------------------------------------------------------------ helpers on the bundle
+def vo2_now(data: Data, d: date) -> tuple[float | None, str | None]:
+    """Garmin's VO2 max, or one estimated from the 5K when Garmin has none."""
+    vo2, _ = data.last_known("training", "vo2max", d, 60)
+    if vo2 is not None:
+        return vo2, "garmin"
+    secs, _ = five_k(data, d)
+    vo2 = vdot_from_race(5000, secs) if secs else None
+    return (vo2, "5k") if vo2 else (None, None)
 
 
-def _recovery(data: Data, d: date) -> tuple[float | None, list[str], dict]:
-    parts, notes, raw = [], [], {}
-    hrv, base = data.value("daily", "hrv_last_night", d), data.baseline("daily", "hrv_last_night", d)
-    if hrv and base:
-        r = hrv / base
-        parts.append(_clamp(75 + (r - 1) * 200))
-        if abs(r - 1) >= 0.03:
-            notes.append(f"HRV {abs(r - 1):.0%} {'above' if r >= 1 else 'below'} your normal")
-        else:
-            notes.append("HRV right at your normal")
-        raw["hrv_vs_normal_pct"] = round((r - 1) * 100)
-    rhr, rbase = data.value("daily", "resting_hr", d), data.baseline("daily", "resting_hr", d)
-    if rhr and rbase:
-        diff = rhr - rbase
-        parts.append(_clamp(75 - diff * 7))
-        if abs(diff) >= 2:
-            notes.append(f"Resting HR {abs(diff):.0f} bpm {'above' if diff > 0 else 'below'} your normal")
-        raw["rhr_vs_normal_bpm"] = round(diff, 1)
-    sleep = data.value("daily", "sleep_score", d)
-    if sleep is None and data.value("daily", "sleep_s", d):
-        sleep = _clamp(25 + data.value("daily", "sleep_s", d) / 3600 * 7.5)
-    if sleep is not None:
-        parts.append(_clamp(sleep))
-        raw["sleep"] = round(sleep)
-    ready = data.value("training", "readiness_score", d)
-    if ready is not None:
-        parts.append(_clamp(ready))
-    bb = data.value("daily", "bb_high", d)
-    if bb is not None:
-        parts.append(_clamp(bb))
-    if not parts:
-        return None, [], raw
-    return sum(parts) / len(parts), notes, raw
-
-
-def _balance(data: Data, d: date) -> tuple[float | None, list[str], dict]:
-    acwr = data.value("training", "acwr", d)
-    if acwr is None:
-        def load(start: date, end: date) -> float:
-            return sum((a.get("duration_s") or 0) / 60 for a in data.acts_between(start, end))
-        acute = load(d - timedelta(days=6), d)
-        chronic = load(d - timedelta(days=27), d) / 4
-        if chronic < 30:  # under ~30 min/week of history: not enough to judge
-            return None, [], {}
-        acwr = acute / chronic
-    score = _interp(acwr, [(0, 20), (0.5, 45), (0.8, 90), (1.0, 100), (1.3, 95), (1.5, 70), (2.0, 25), (3.0, 10)])
-    note = None
-    if acwr > 1.5:
-        note = f"Load is {acwr:.1f}× your usual: injury risk rises"
-    elif acwr < 0.6:
-        note = "Training load well below your usual"
-    return score, [note] if note else [], {"acwr": round(acwr, 2)}
-
-
-def _consistency(data: Data, d: date) -> tuple[float | None, list[str], dict]:
-    parts, notes = [], []
-    if data.acts:
-        active = 0
-        for w in range(8):
-            end = d - timedelta(days=7 * w)
-            wk = data.acts_between(end - timedelta(days=6), end)
-            minutes = sum((a.get("duration_s") or 0) for a in wk) / 60
-            active += len(wk) >= 2 or minutes >= 75
-        parts.append((active / 8 * 100, 0.5))
-        notes.append(f"Active {active} of the last 8 weeks")
-    steps = [(r.get("steps"), r.get("step_goal")) for i in range(14)
-             if (r := data.daily.get((d - timedelta(days=i)).isoformat())) and r.get("steps") is not None]
-    if steps:
-        hit = sum(1 for s, g in steps if s >= (g or 7500))
-        parts.append((hit / len(steps) * 100, 0.25))
-    mins = [(r.get("intensity_moderate") or 0) + 2 * (r.get("intensity_vigorous") or 0) for i in range(7)
-            if (r := data.daily.get((d - timedelta(days=i)).isoformat()))
-            and (r.get("intensity_moderate") is not None or r.get("intensity_vigorous") is not None)]
-    if mins:
-        parts.append((_clamp(sum(mins) / 150 * 100), 0.25))
-    if not parts:
-        return None, [], {}
-    total_w = sum(w for _, w in parts)
-    return sum(v * w for v, w in parts) / total_w, notes, {}
-
-
-PILLARS = {"engine": _engine, "recovery": _recovery, "balance": _balance, "consistency": _consistency}
-
-
-def score_day(data: Data, d: date) -> dict:
-    pillars, notes, raw = {}, {}, {}
-    for key, fn in PILLARS.items():
-        val, n, r = fn(data, d)
-        if val is not None:
-            pillars[key] = round(val)
-            notes[key] = n
-        raw.update(r)
-    total = None
-    if len(pillars) >= 2:
-        w = sum(WEIGHTS[k] for k in pillars)
-        total = int(round(_clamp(sum(pillars[k] * WEIGHTS[k] for k in pillars) / w, 1, 100)))
-    return {"date": d.isoformat(), "score": total, "tier": tier(total), "pillars": pillars, "notes": notes, "raw": raw}
+def acwr(data: Data, d: date) -> float | None:
+    """This week's load against your usual (Garmin's ratio, or one from workout minutes)."""
+    r = data.value("training", "acwr", d)
+    if r is not None:
+        return r
+    def load(start: date, end: date) -> float:
+        return sum((a.get("duration_s") or 0) / 60 for a in data.acts_between(start, end))
+    chronic = load(d - timedelta(days=27), d) / 4
+    if chronic < 30:  # under ~30 min/week of history: not enough to judge
+        return None
+    return round(load(d - timedelta(days=6), d) / chronic, 2)
 
 
 # ------------------------------------------------------------------ public API
@@ -294,44 +189,50 @@ def _cache_key(db: Database, kind: str, today: date, days: int) -> tuple:
 
 
 def overview(db: Database, days: int = 90, today: date | None = None) -> dict:
-    """Fitness score today (with drivers) + history, and series for the headline metrics."""
+    """The 5K estimate (with its history) and how your VO2 max compares for your age."""
     today = today or date.today()
     key = _cache_key(db, "overview", today, days)
     if key in _cache:
         return _cache[key]
     data = Data(db, today, days)
-    history, five = [], []
+    five = []
     for i in range(days - 1, -1, -1):
         d = today - timedelta(days=i)
-        s = score_day(data, d)
-        history.append({"date": s["date"], "score": s["score"], **{k: s["pillars"].get(k) for k in PILLARS}})
         secs, src = five_k(data, d)
         five.append({"date": d.isoformat(), "seconds": round(secs) if secs else None, "source": src})
-    now = score_day(data, today)
-    week_ago = next((h for h in reversed(history[:-7]) if h["score"] is not None), None)
-    drivers = []
-    if week_ago:
-        for k in PILLARS:
-            if now["pillars"].get(k) is not None and week_ago.get(k) is not None:
-                delta = now["pillars"][k] - week_ago[k]
-                if abs(delta) >= 3:
-                    drivers.append({"pillar": PILLAR_NAMES[k], "delta": delta})
-        drivers.sort(key=lambda x: -abs(x["delta"]))
     secs, src = five_k(data, today)
     old_secs = next((f["seconds"] for f in reversed(five[:-30]) if f["seconds"]), None) if len(five) > 30 else None
+    vo2, vo2_src = vo2_now(data, today)
     result = {
-        "today": {**now, "pillar_names": PILLAR_NAMES, "weights": WEIGHTS,
-                  "change_7d": (now["score"] - week_ago["score"]) if (now["score"] is not None and week_ago) else None,
-                  "drivers": drivers[:3]},
-        "history": history,
         "five_k": {"seconds": round(secs) if secs else None, "display": fmt_duration(secs), "source": src,
                    "change_30d_s": round(secs - old_secs) if (secs and old_secs) else None, "series": five},
+        "vo2": {"value": round(vo2, 1) if vo2 else None, "source": vo2_src,
+                "for_age": round(vo2_score(vo2, data.age, data.sex)) if vo2 else None},
         "profile_known": {"age": data.age is not None, "sex": data.sex is not None},
     }
     if len(_cache) > 20:
         _cache.clear()
     _cache[key] = result
     return result
+
+
+def training_paces(db: Database, today: date | None = None) -> list[dict]:
+    """Easy and threshold paces from your 5K estimate, plus goal-race pace, in seconds per km."""
+    today = today or date.today()
+    data = Data(db, today, 7)
+    out = []
+    secs, _ = five_k(data, today)
+    vdot = vdot_from_race(5000, secs) if secs else None
+    if vdot:
+        for name, pct in (("Easy", EASY_PCT), ("Threshold", THRESHOLD_PCT)):
+            per_km = pace_for_vo2(vdot * pct)
+            if per_km:
+                out.append({"name": name, "s_per_km": round(per_km, 1), "from": "5K estimate"})
+    p = data.prefs
+    km, goal = prefs_mod.race_km(p), prefs_mod.goal_seconds(p.get("race_goal_time", ""))
+    if p.get("race_enabled") and km and goal and p.get("race_date") and p["race_date"] >= today.isoformat():
+        out.append({"name": "Race goal", "s_per_km": round(goal / km, 1), "from": p.get("race_name") or "goal race"})
+    return out
 
 
 def race_card(db: Database, today: date | None = None) -> dict | None:
@@ -395,12 +296,9 @@ def facts(db: Database, today: date | None = None) -> dict:
         end = today - timedelta(days=7 * w)
         wk = [a for a in data.acts_between(end - timedelta(days=6), end) if _is_run(a)]
         weekly.append({"weeks_ago": w, "runs": len(wk), "run_distance_" + unit: dist(sum(a.get("distance_m") or 0 for a in wk))})
-    t = ov["today"]
     y = today - timedelta(days=1)
     out = {
         "date": today.isoformat(), "units": unit,
-        "fitness_score": {"score": t["score"], "tier": t["tier"], "change_7d": t["change_7d"],
-                          "pillars": t["pillars"], "notes": t["notes"]},
         "vo2max": {"now": data.last_known("training", "vo2max", today, 60)[0],
                    "30_days_ago": data.last_known("training", "vo2max", today - timedelta(days=30), 30)[0]},
         "training_readiness": {"today": data.value("training", "readiness_score", today),
@@ -415,11 +313,12 @@ def facts(db: Database, today: date | None = None) -> dict:
         "body_battery_high": data.value("daily", "bb_high", today),
         "training_status": data.last_known("training", "training_status", today, 7)[0],
         "training_load": {"acute": data.value("training", "acute_load", today), "chronic": data.value("training", "chronic_load", today),
-                          "acute_chronic_ratio": ov["today"]["raw"].get("acwr")},
+                          "acute_chronic_ratio": acwr(data, today)},
         "estimated_5k": {"time": ov["five_k"]["display"], "source": ov["five_k"]["source"],
                          "change_30d_seconds": ov["five_k"]["change_30d_s"]},
         "last_7_days_activities": last7,
         "weekly_running": weekly,
         "goal_race": race_card(db, today),
+        "weather_now": weather.summary(db),
     }
     return out

@@ -16,7 +16,7 @@ def reset():
         f.unlink(missing_ok=True)
     main.db.session_delete_all()
     main.db.wipe_garmin_data()  # every test starts with no synced data
-    for k in ("prefs", "setup_done", "insight", "insight_attempt", "ai_usage", "profile", "notify_sent"):
+    for k in ("prefs", "setup_done", "insight", "insight_attempt", "ai_usage", "profile", "notify_sent", "weather_cache"):
         main.db.delete_meta(k)
     (s.secrets_dir / "discord-webhook").unlink(missing_ok=True)
     for prov in ("claude", "gemini", "openai"):

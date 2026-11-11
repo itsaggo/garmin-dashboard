@@ -5,6 +5,7 @@ Nothing secret lives here: keys, passwords and sign-in tokens are separate 0600 
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import time
@@ -18,24 +19,25 @@ RACE_DISTANCES_KM = {"5k": 5.0, "10k": 10.0, "half": 21.0975, "marathon": 42.195
 
 # Dashboard boxes: id -> (title, default section, default width of 12, default height in rows)
 WIDGETS: dict[str, tuple[str, str, int, int]] = {
-    "fitness": ("Fitness score", "main", 4, 6),
-    "coach": ("AI coach", "main", 8, 6),
+    # Main page reads like a front page: the coach's note as the lead, today's weather and
+    # heat-graded paces beside it, the race strip, then the four key numbers and the week in brief.
+    "coach": ("AI coach", "main", 8, 8),
+    "weather": ("Weather & heat-graded pace", "main", 4, 8),
+    "race": ("Goal race", "main", 12, 2),
     "vo2": ("VO2 max", "main", 3, 4),
     "readiness": ("Training readiness", "main", 3, 4),
     "sleep": ("Sleep score", "main", 3, 4),
     "five_k": ("5K estimate", "main", 3, 4),
-    "race": ("Goal race", "main", 6, 3),
-    "weekly_run": ("Weekly running", "main", 6, 4),
-    "fitness_trend": ("Fitness score trend", "details", 6, 4),
+    "weekly_run": ("Weekly running", "main", 4, 4),
+    "hrv": ("HRV", "main", 4, 4),
+    "sleep_stages": ("Sleep stages", "main", 4, 4),
+    "activities": ("Recent activities", "main", 12, 6),
     "rhr": ("Resting heart rate", "details", 6, 4),
-    "hrv": ("HRV", "details", 6, 4),
-    "sleep_stages": ("Sleep stages", "details", 6, 4),
     "body_battery": ("Body Battery", "details", 6, 4),
     "steps": ("Steps", "details", 6, 4),
     "stress": ("Stress", "details", 6, 4),
     "training_load": ("Training load", "details", 6, 4),
     "weekly_ride": ("Weekly cycling", "details", 6, 4),
-    "activities": ("Recent activities", "details", 12, 6),
 }
 SECTIONS = ("main", "details", "hidden")
 
@@ -46,7 +48,13 @@ def default_layout() -> list[dict]:
 
 def complete_layout(items: list[dict] | None) -> list[dict]:
     """Saved layout plus any boxes added in newer versions (in their default spots)."""
-    items = [dict(i) for i in (items or []) if i.get("id") in WIDGETS]
+    items = [dict(i) for i in (items or []) if isinstance(i, dict)]
+    if not any(i.get("id") == "weather" for i in items):
+        for i in items:  # v1.3: weather takes the fitness score's place and size
+            if i.get("id") == "fitness":
+                i["id"] = "weather"
+                break
+    items = [i for i in items if i.get("id") in WIDGETS]
     seen = {i["id"] for i in items}
     return items + [i for i in default_layout() if i["id"] not in seen]
 
@@ -62,6 +70,9 @@ DEFAULTS: dict[str, Any] = {
     "race_custom_km": None,
     "race_goal_time": "",
     "include_cycling": True,
+    "weather_place": "Houston, Texas, United States",
+    "weather_lat": 29.76,
+    "weather_lon": -95.37,
     "ai_provider": "none",
     "ai_model": "",
     "ollama_url": "",
@@ -195,6 +206,24 @@ def validate(changes: dict[str, Any]) -> dict[str, Any]:
                 if parts.scheme not in ("http", "https") or not parts.hostname or parts.username or parts.password \
                         or parts.query or parts.fragment or len(value) > 200:
                     raise PrefError(key, "Use an address like http://192.168.4.23:11434")
+        elif key == "weather_place":
+            value = " ".join(str(value or "").split())
+            if len(value) > 120 or any(ord(ch) < 32 for ch in value):
+                raise PrefError(key, "Pick a place from the search results.")
+        elif key in ("weather_lat", "weather_lon"):
+            lim = 90 if key == "weather_lat" else 180
+            if value in (None, ""):
+                value = None
+            else:
+                if isinstance(value, bool):
+                    raise PrefError(key, "Pick a place from the search results.")
+                try:
+                    value = float(value)
+                except (TypeError, ValueError):
+                    raise PrefError(key, "Pick a place from the search results.") from None
+                if not math.isfinite(value) or not -lim <= value <= lim:
+                    raise PrefError(key, "Pick a place from the search results.")
+                value = round(value, 2)  # about 1 km: enough for weather, no more precise than needed
         elif key == "ai_model":
             value = str(value or "").strip()
             if value and not _MODEL_RE.match(value):

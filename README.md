@@ -6,15 +6,18 @@ A private, self-hosted dashboard for your own Garmin data.
   HRV, Body Battery, stress and activities.
 - **Optional Garmin Connect sign-in** adds what the official API leaves out:
   VO2 max, training status, training readiness, recovery time and training load.
-- **A fitness score (1–100)** built from VO2 max, recovery, training balance
-  and consistency, with a history chart and what moved it this week.
+- **Weather with heat-graded pace**: today's conditions for a city you pick,
+  how much the heat and humidity slow you down, your easy, threshold and race
+  paces adjusted for it, and the coolest time to run.
 - **An AI coach**: connect Claude, Gemini, ChatGPT or a local Ollama model and
   get a written insight every morning, plus a box to ask it questions.
 - **A dashboard you arrange yourself**: drag boxes between the main page, the
   Details tab and Hidden, and resize them. It has a phone layout with a bottom tab bar.
 
 Everything stays on your server. The only things sent anywhere are the
-requests to Garmin that fetch your data.
+requests to Garmin that fetch your data, the weather lookup for the place you
+choose (to Open-Meteo, rounded to about 1 km), and, if you turn on the AI coach,
+a name-free summary to the provider you pick.
 
 ![Dashboard screenshot (sample data)](docs/screenshot.png)
 
@@ -100,19 +103,34 @@ and the Garmin Connect sign-in (typically after months). When either lapses, the
 dashboard shows a banner, you renew it in Settings, and the other data source
 keeps working meanwhile.
 
-## Fitness score
+## Weather and heat-graded pace
 
-A 1–100 score built from four parts. Each part is shown, along with what changed since last week.
+The weather box shows the current conditions for the place set in
+**Settings → General → Weather location** (Houston by default), and grades
+the heat with the runner's rule of thumb of adding the temperature and the dew
+point in °F:
 
-| Part | Weight | What it uses |
-|---|---|---|
-| Engine | 35% | VO2 max compared with norms for your age and sex. Without Connect, VO2 max is estimated from your 5K. |
-| Recovery | 25% | HRV and resting heart rate against your own 30-day normal, plus sleep score, readiness and Body Battery |
-| Consistency | 25% | Active weeks out of the last 8, days you hit your step goal, and weekly intensity minutes against the recommended 150 |
-| Training balance | 15% | This week's load compared with your usual. The sweet spot is 0.8–1.3× |
+| Temp + dew point | Slow down by |
+|---|---|
+| 100 or less | nothing |
+| 101–120 | up to 1% |
+| 121–140 | 1–3% |
+| 141–160 | 3–6% |
+| 161–180 | 6–10% |
+| over 180 | hard running not recommended |
 
-Bands: 85+ Peak · 70+ Strong · 55+ Solid · 40+ Building · below 40 Recharge.
-It needs about 3 weeks of data before "your normal" means much.
+It then shows your paces three ways: in cool weather, right now, and at the
+coolest hour between 5 a.m. and 8 p.m. in the next day.
+- **Easy and threshold** come from your 5K estimate (Daniels' formulas).
+- **Race goal** is your goal time over the race distance, when a race is set.
+
+A chart shows how much slower each of the next 18 hours runs.
+
+Forecasts come from [Open-Meteo](https://open-meteo.com/) (free, no account or
+key, data under CC BY 4.0). Only the place you pick, rounded to about 1 km, is
+sent to them, at most about once every 30 minutes. The coach and Discord use the
+same saved forecast. It's a rule of thumb for pacing, not a safety guarantee:
+in serious heat, go by how you feel.
 
 ## AI coach
 
@@ -129,8 +147,8 @@ Each morning after 6 a.m., after a fresh sync, the coach writes a short insight.
 You can also ask it questions on the dashboard.
 
 What it sends and costs:
-- **Only a name-free summary** of your numbers goes to the provider: scores,
-  trends, recent activities and your goal race.
+- **Only a name-free summary** of your numbers goes to the provider: trends,
+  recent activities, today's heat and your goal race.
 - **Your API key stays private.** It's stored like your Garmin key and is never
   shown again.
 - **Cloud providers bill you directly**, roughly a cent per insight. The
@@ -146,11 +164,10 @@ To set it up:
 2. Paste it in **Settings → Notifications** and click **Save & send test**.
 
 Then pick which messages it sends:
-- **Morning insight**, around 7 a.m.: the AI coach's note plus your fitness
-  score, readiness, sleep, VO2 max, 5K and race countdown. If the AI coach is
+- **Morning insight**, around 7 a.m.: the AI coach's note plus today's heat,
+  readiness, sleep, VO2 max, 5K and race countdown. If the AI coach is
   on, it waits until 9 a.m. at the latest for that day's insight.
-- **Weekly summary**, Monday morning: last week's workouts, mileage and change
-  in fitness score.
+- **Weekly summary**, Monday morning: last week's workouts and mileage.
 - **Problems & warnings:** a failed sync, an expired Garmin key or sign-in, no
   sync for over a day, or resting heart rate 5+ bpm above your normal for 3
   days. Each problem is sent once, not repeatedly.
@@ -314,7 +331,8 @@ app/
   setup.py     terminal fallback (password reset etc.)
   prefs.py     Settings-page preferences (validated)
   garmin_login.py  Garmin Connect sign-in incl. two-factor (web and terminal)
-  fitness.py   fitness score, 5K estimate, facts for the AI coach
+  fitness.py   5K estimate, training paces, race card, facts for the AI coach
+  weather.py   Open-Meteo forecast, temperature + dew point heat grade
   ai.py        AI providers (Claude, Gemini, ChatGPT, Ollama), daily insight, caps
   notify.py    Discord webhook notifications
   sync.py      official Personal API sync (chunked ranges, backoff, token refresh)

@@ -63,6 +63,15 @@
               </label>
               <label>Time zone <input name="timezone" list="tzList" spellcheck="false" placeholder="America/Chicago"></label>
               <datalist id="tzList"></datalist>
+              <div class="span fieldset" id="placeBox">
+                <h3>Weather location</h3>
+                <p class="note" id="placeNow"></p>
+                <div class="row"><input id="placeQ" maxlength="80" autocomplete="off" spellcheck="false" placeholder="Search a city, e.g. Austin" aria-label="Search for a city">
+                  <button type="button" class="btn" id="placeFind">Search</button></div>
+                <div class="place-list" id="placeList" hidden></div>
+                <input type="hidden" name="weather_place"><input type="hidden" name="weather_lat"><input type="hidden" name="weather_lon">
+                <p class="hint">Used for the weather box and heat-graded paces. Weather comes from Open-Meteo; only this place, rounded to about 1 km, is sent to them.</p>
+              </div>
               <label>Theme
                 <select name="theme"><option value="auto">Match my device</option><option value="light">Light</option><option value="dark">Dark</option></select>
               </label>
@@ -190,7 +199,7 @@
         <div class="card">
           <h2>What to send</h2>
           <form method="post" id="notifyForm" class="stack">
-            <label class="check"><input type="checkbox" name="notify_morning"> Morning insight <span class="hint">around 7 a.m.: your coach's note, fitness score, readiness, sleep</span></label>
+            <label class="check"><input type="checkbox" name="notify_morning"> Morning insight <span class="hint">around 7 a.m.: your coach's note, heat, readiness, sleep</span></label>
             <label class="check"><input type="checkbox" name="notify_weekly"> Weekly summary <span class="hint">Monday morning recap of last week</span></label>
             <label class="check"><input type="checkbox" name="notify_problems"> Problems &amp; warnings <span class="hint">sync failures, expired Garmin key or sign-in, resting heart rate high for 3 days</span></label>
             <div class="row"><button type="button" class="btn primary" id="notifySave" data-primary>Save</button></div>

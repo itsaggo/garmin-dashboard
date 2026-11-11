@@ -4,50 +4,57 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="referrer" content="same-origin">
-  <meta name="theme-color" content="#134E5E">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#121214" media="(prefers-color-scheme: dark)">
   <title>Training Dashboard</title>
   <script src="/static/theme.js"></script>
   <link rel="stylesheet" href="/static/style.css">
   <link rel="icon" href="/static/favicon.svg">
 </head>
-<body class="dash">
+<body class="dash press">
 <header class="appbar">
-  <a class="brand" href="/"><img src="/static/favicon.svg" alt="" width="30" height="30"><span>Training</span></a>
-  <nav class="tabs" aria-label="Pages">
-    <a href="#main" data-tab="main" class="tab">Overview</a>
-    <a href="#details" data-tab="details" class="tab">Details</a>
-  </nav>
+  <a class="brand" href="/"><img src="/static/favicon.svg" alt="" width="28" height="28"><span>Garmin Dashboard</span></a>
   <div class="appbar-r">
-    <div class="seg" id="range" role="group" aria-label="Chart range">
-      <button type="button" data-days="30">30d</button>
-      <button type="button" data-days="90" aria-pressed="true">90d</button>
-      <button type="button" data-days="180">6m</button>
-      <button type="button" data-days="365">1y</button>
-    </div>
+    <nav class="tabs" aria-label="Pages">
+      <a href="#main" data-tab="main" class="tab">Today</a>
+      <a href="#details" data-tab="details" class="tab">Details</a>
+      <a href="/settings" class="tab">Settings</a>
+    </nav>
     <button type="button" class="icon-btn" id="syncBtn" title="Sync now" aria-label="Sync now">
       <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 12a8 8 0 0 1-14.3 4.9M4 12A8 8 0 0 1 18.3 7.1M18 3v4.5h-4.5M6 21v-4.5h4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
-    <a class="icon-btn desk-only" href="/settings" title="Settings" aria-label="Settings">
-      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
-    </a>
   </div>
 </header>
 
 <main class="board-wrap">
-  <div class="status-line"><span id="syncInfo">Loading…</span><span id="counts"></span></div>
+  <div class="dateline">
+    <p class="eyebrow"><b id="today"></b><span id="raceWeek"></span></p>
+    <div class="dl-r">
+      <span class="eyebrow" id="syncInfo">Loading…</span>
+      <div class="seg range" id="range" role="group" aria-label="Chart range">
+        <button type="button" data-days="30">30d</button>
+        <button type="button" data-days="90" aria-pressed="true">90d</button>
+        <button type="button" data-days="180">6m</button>
+        <button type="button" data-days="365">1y</button>
+      </div>
+    </div>
+  </div>
   <div id="banners"></div>
-  <section class="board" id="sec-main" data-section="main" aria-label="Overview"></section>
+  <section class="board" id="sec-main" data-section="main" aria-label="Today"></section>
   <section class="board" id="sec-details" data-section="details" aria-label="Details" hidden></section>
-  <p class="foot-note">Training guidance from your own data, not medical advice · <a href="/settings#customize">Customize this page</a> · <a href="/raw">Raw data</a></p>
+  <footer class="foot-note">
+    <span>Training guidance from your own data, not medical advice.</span>
+    <span><span id="counts"></span> · <a href="/settings#customize">Customize this page</a> · <a href="/raw">Raw data</a></span>
+  </footer>
 </main>
 
 <nav class="bottom-nav" aria-label="Pages">
   <a href="#main" data-tab="main">
-    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M3 12l9-8 9 8M5 10v10h5v-6h4v6h5V10" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>Overview</a>
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 5h16M4 10h16M4 15h10M4 20h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Today</a>
   <a href="#details" data-tab="details">
     <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Details</a>
   <a href="/settings">
-    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Settings</a>
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="16" cy="6" r="2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="10" cy="12" r="2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="18" cy="18" r="2" fill="none" stroke="currentColor" stroke-width="2"/></svg>Settings</a>
 </nav>
 <script src="/static/vendor/chart.umd.min.js"></script>
 <script src="/static/grid.js"></script>

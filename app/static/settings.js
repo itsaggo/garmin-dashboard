@@ -3,7 +3,7 @@
 "use strict";
 
 const PREF_FIELDS = ["units", "timezone", "theme", "include_cycling", "race_enabled", "race_name", "race_date",
-  "race_distance", "race_custom_km", "race_goal_time"];
+  "race_distance", "race_custom_km", "race_goal_time", "weather_place", "weather_lat", "weather_lon"];
 const AI_FIELDS = ["ai_provider", "ai_model", "ollama_url"];
 const NOTIFY_FIELDS = ["notify_morning", "notify_weekly", "notify_problems"];
 let state = null;
@@ -12,7 +12,7 @@ function fieldValue(form, name) {
   const el = form.elements[name];
   if (!el) return undefined;
   if (el.type === "checkbox") return el.checked;
-  if (name === "race_custom_km") return el.value === "" ? null : Number(el.value);
+  if (name === "race_custom_km" || name === "weather_lat" || name === "weather_lon") return el.value === "" ? null : Number(el.value);
   return el.value;
 }
 
@@ -56,7 +56,7 @@ async function loadState() {
   state = await api("/api/settings");
   applyTheme(state.prefs.theme);
   const prefsForm = $("#prefsForm");
-  if (prefsForm) { fillForm(prefsForm, state.prefs, PREF_FIELDS); showCustomKm(prefsForm); }
+  if (prefsForm) { fillForm(prefsForm, state.prefs, PREF_FIELDS); showCustomKm(prefsForm); showPlace(state.prefs.weather_place); }
   const nf = $("#notifyForm");
   if (nf) fillForm(nf, state.prefs, NOTIFY_FIELDS);
   const aiForm = $("#aiForm");
@@ -181,8 +181,41 @@ function wirePrefs() {
   form.elements.race_distance.addEventListener("change", () => showCustomKm(form));
   if (form.elements.race_enabled) form.elements.race_enabled.addEventListener("change", () => showCustomKm(form));
   form.elements.theme.addEventListener("change", () => applyTheme(form.elements.theme.value));
+  wirePlaceSearch(form);
   const btn = $("#prefsSave");
   if (btn) btn.addEventListener("click", () => busy(btn, () => savePrefs(form, PREF_FIELDS, $("#prefsMsg"))));
+}
+
+/* ---------------------------------------------------------------- weather location */
+function showPlace(label, pending) {
+  const el = $("#placeNow");
+  if (!el) return;
+  el.textContent = label ? `Using ${label}${pending ? ". Press Save to keep it." : ""}` : "No location set, so the weather box is off.";
+}
+function wirePlaceSearch(form) {
+  const btn = $("#placeFind"), list = $("#placeList"), q = $("#placeQ");
+  if (!btn || !form.elements.weather_place) return;
+  const search = () => busy(btn, async () => {
+    list.hidden = false; list.replaceChildren();
+    const note = (text) => { const p = document.createElement("p"); p.className = "note"; p.textContent = text; list.append(p); };
+    try {
+      const r = await api("/api/weather/places?q=" + encodeURIComponent(q.value.trim()));
+      if (!r.places.length) return note("No places found. Try the city name only.");
+      for (const pl of r.places) {
+        const b = document.createElement("button");
+        b.type = "button"; b.className = "btn"; b.textContent = pl.label;
+        b.addEventListener("click", () => {
+          form.elements.weather_place.value = pl.label;
+          form.elements.weather_lat.value = String(pl.lat);
+          form.elements.weather_lon.value = String(pl.lon);
+          showPlace(pl.label, true); list.hidden = true; q.value = "";
+        });
+        list.append(b);
+      }
+    } catch (e) { note(e.message); }
+  });
+  btn.addEventListener("click", search);
+  q.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); search(); } });
 }
 
 function provider() { const f = $("#aiForm"); return f ? f.elements.ai_provider.value || "none" : "none"; }

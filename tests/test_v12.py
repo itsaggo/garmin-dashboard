@@ -1,4 +1,4 @@
-"""v1.2: race switch, layout, resting HR, fitness score, 5K, AI providers."""
+"""v1.2: race switch, layout, resting HR, VO2 norms, 5K, AI providers."""
 import json
 import threading
 from datetime import date, timedelta
@@ -122,7 +122,7 @@ def test_connect_stores_predictions_rhr_profile(tmp_path, monkeypatch):
     assert json.loads(db.get_meta("profile")) == {"birth_year": 1996, "sex": "male"}
 
 
-# ------------------------------------------------------------------ fitness score
+# ------------------------------------------------------------------ VO2, 5K, facts
 def _seed(db, days=70, rhr=52, hrv=60, vo2=48.0):
     for i in range(days):
         d = (TODAY - timedelta(days=i)).isoformat()
@@ -136,27 +136,6 @@ def _seed(db, days=70, rhr=52, hrv=60, vo2=48.0):
                                      "duration_s": 6 * 360}, {})
 
 
-def test_fitness_score_healthy_runner(tmp_path):
-    db = Database(tmp_path / "f.db")
-    db.set_meta("profile", json.dumps({"birth_year": 1996, "sex": "male"}))
-    _seed(db)
-    s = fitness.score_day(fitness.Data(db, TODAY, 70), TODAY)
-    assert 60 <= s["score"] <= 90 and s["tier"] in ("Solid", "Strong", "Peak")
-    assert set(s["pillars"]) == {"engine", "recovery", "balance", "consistency"}
-    assert all(1 <= v <= 100 for v in s["pillars"].values())
-
-
-def test_recovery_drops_when_hrv_low_and_rhr_high(tmp_path):
-    db = Database(tmp_path / "f2.db")
-    _seed(db)
-    before = fitness.score_day(fitness.Data(db, TODAY, 70), TODAY)
-    db.upsert_daily(TODAY.isoformat(), {"hrv_last_night": 42, "resting_hr": 60, "sleep_score": 45})
-    after = fitness.score_day(fitness.Data(db, TODAY, 70), TODAY)
-    assert after["pillars"]["recovery"] < before["pillars"]["recovery"] - 20
-    assert after["score"] < before["score"]
-    assert any("HRV" in n for n in after["notes"]["recovery"])
-
-
 def test_vo2_norms_and_vdot():
     assert fitness.vo2_score(61, 25, "male") == pytest.approx(95)
     assert fitness.vo2_score(33, 25, "male") == pytest.approx(10)
@@ -166,7 +145,8 @@ def test_vo2_norms_and_vdot():
 
 def test_overview_with_empty_db(tmp_path):
     ov = fitness.overview(Database(tmp_path / "e.db"), 30, TODAY)
-    assert ov["today"]["score"] is None and len(ov["history"]) == 30 and ov["five_k"]["seconds"] is None
+    assert ov["five_k"]["seconds"] is None and len(ov["five_k"]["series"]) == 30 and ov["vo2"]["value"] is None
+    assert "today" not in ov and "history" not in ov  # the fitness score is gone
 
 
 def test_five_k_prefers_garmin(tmp_path):

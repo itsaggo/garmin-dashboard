@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="referrer" content="same-origin">
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#121214" media="(prefers-color-scheme: dark)">
+  <title>Race Recap</title>
+  <script src="/static/theme.js"></script>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="/static/favicon.svg">
+</head>
+<body class="dash recap-page">
+<header class="appbar">
+  <a class="brand" href="/"><img src="/static/favicon.svg" alt="" width="28" height="28"><span>Garmin Dashboard</span></a>
+  <div class="appbar-r">
+    <nav class="tabs" aria-label="Pages">
+      <a href="/#main" class="tab">Today</a>
+      <a href="/#details" class="tab">Details</a>
+      <a href="/recap" class="tab on" aria-current="page">Recap</a>
+      <a href="/settings" class="tab">Settings</a>
+    </nav>
+  </div>
+</header>
+
+<main class="recap-wrap">
+  <div class="dateline">
+    <p class="eyebrow"><b>Race recap</b><span class="rc-tagline">Pick a run, watch the preview, save a video for Instagram</span></p>
+  </div>
+
+  <div class="recap-grid">
+    <section class="rc-runs" aria-labelledby="runsHead">
+      <h2 class="rc-h" id="runsHead">Your runs</h2>
+      <input type="search" id="runSearch" placeholder="Search by name or date" autocomplete="off" aria-label="Search runs">
+      <div class="run-list" id="runList" role="listbox" aria-label="Runs" tabindex="0"></div>
+      <p class="msg" id="listMsg"></p>
+    </section>
+
+    <section class="rc-stage" aria-labelledby="runTitle">
+      <div class="rc-head">
+        <h1 id="runTitle">Pick a run</h1>
+        <p class="sub" id="runSub">Nothing is downloaded or rendered until you choose one.</p>
+      </div>
+
+      <div class="rc-frame" id="frame">
+        <canvas id="view" role="img" aria-label="Recap preview"></canvas>
+        <div class="rc-cover" id="cover">
+          <p id="coverText">Choose a run from the list to see its recap.</p>
+          <button type="button" class="btn sm" id="retryBtn" hidden>Try again</button>
+        </div>
+      </div>
+
+      <div class="rc-transport" role="toolbar" aria-label="Preview controls">
+        <button type="button" class="icon-btn" id="playBtn" aria-label="Pause" disabled>
+          <svg id="icoPause" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M8 5v14M16 5v14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
+          <svg id="icoPlay" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" hidden><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg>
+        </button>
+        <button type="button" class="icon-btn" id="replayBtn" aria-label="Replay from the start" disabled>
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4.5h4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <input type="range" id="scrub" min="0" max="1000" value="0" aria-label="Recap timeline" disabled>
+        <span class="rc-clock" id="clock">0:00 / 0:14</span>
+      </div>
+
+      <div class="rc-options">
+        <div class="rc-opt">
+          <span class="eyebrow" id="fmtLabel">Format</span>
+          <div class="seg" role="group" aria-labelledby="fmtLabel" id="fmtSeg">
+            <button type="button" data-fmt="916" aria-pressed="true">9:16 <small>Story · Reel</small></button>
+            <button type="button" data-fmt="45" aria-pressed="false">4:5 <small>Feed</small></button>
+            <button type="button" data-fmt="11" aria-pressed="false">1:1 <small>Square</small></button>
+          </div>
+        </div>
+        <div class="rc-opt">
+          <span class="eyebrow" id="ghostLabel">Ghost runner</span>
+          <div class="seg" role="group" aria-labelledby="ghostLabel" id="ghostSeg">
+            <button type="button" data-ghost="goal" aria-pressed="false">Goal pace</button>
+            <button type="button" data-ghost="even" aria-pressed="true">Even pace</button>
+          </div>
+        </div>
+        <div class="rc-opt">
+          <span class="eyebrow" id="hideLabel">Hide start &amp; finish</span>
+          <div class="seg" role="group" aria-labelledby="hideLabel" id="hideSeg"></div>
+        </div>
+      </div>
+
+      <div class="rc-export">
+        <button type="button" class="btn primary" id="saveVideo" disabled>Save video</button>
+        <button type="button" class="btn" id="saveStill" disabled>Save still</button>
+        <button type="button" class="btn" id="shareBtn" hidden>Share…</button>
+        <progress id="exportBar" max="1" value="0" hidden></progress>
+      </div>
+      <p class="msg" id="exportMsg"></p>
+      <p class="note rc-credits" id="credits"></p>
+    </section>
+  </div>
+</main>
+
+<nav class="bottom-nav" aria-label="Pages">
+  <a href="/#main">
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 5h16M4 10h16M4 15h10M4 20h10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Today</a>
+  <a href="/#details">
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Details</a>
+  <a href="/recap" class="on" aria-current="page">
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 9v6l5-3z" fill="currentColor"/></svg>Recap</a>
+  <a href="/settings">
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="16" cy="6" r="2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="10" cy="12" r="2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="18" cy="18" r="2" fill="none" stroke="currentColor" stroke-width="2"/></svg>Settings</a>
+</nav>
+<script src="/static/common.js"></script>
+<script src="/static/vendor/three.min.js"></script>
+<script src="/static/recap.js"></script>
+</body>
+</html>

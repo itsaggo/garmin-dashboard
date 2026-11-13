@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.4.0
+
+- **Race recap.** A new **Recap** tab turns a run into a 14-second arcade-style 3D video for Instagram.
+  - Pick a run from the list (outdoor runs only, with search). Nothing is downloaded or rendered until you choose one.
+  - Built from the run's own data: the GPS track, mile or km splits, heart rate, cadence and elevation, read from
+    the original activity file through the official Personal API.
+  - Starts on a real aerial photo of your course (USGS, US mainland). A shockwave turns it into a pixel-art game board,
+    raises nearby buildings (OpenStreetMap) and chases your runner, then pulls up over the whole course.
+  - A coin and split call-out at every mile, a combo for miles that keep getting faster, a boost trail where you beat your
+    average pace, a ghost at your goal (or an even) pace, heart rate as a zone-coloured power meter, and a high-score
+    finish with your three best miles.
+  - 9:16, 4:5 and 1:1. **Save video** renders a 1080-wide MP4 (H.264, 30 fps) on your own device; **Save still** saves a
+    PNG; **Share** on phones.
+  - **Hide start & finish** keeps the first and last 0.1 or 0.25 mi off the video.
+  - Only the area's rectangle is sent to USGS and OpenStreetMap, never the route. Downloads are cached in `/data/recap`
+    and removed by **Delete stored data**.
+- Recap is linked from the tab bar on the dashboard.
+
 ## v1.3.1
 
 - **Pick your AI model from a list.** Settings → AI coach now has a searchable dropdown filled with the models

@@ -65,6 +65,13 @@ CREATE TABLE IF NOT EXISTS sync_log (
     message TEXT
 );
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
+CREATE TABLE IF NOT EXISTS recap_cache (
+    id         INTEGER NOT NULL,
+    kind       TEXT NOT NULL,
+    fetched_at TEXT NOT NULL,
+    body       TEXT NOT NULL,
+    PRIMARY KEY (id, kind)
+);
 CREATE TABLE IF NOT EXISTS sessions (
     token_hash TEXT PRIMARY KEY,
     created_at INTEGER NOT NULL,
@@ -207,6 +214,17 @@ class Database:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    # ---- race recap cache (track, buildings) -------------------------------
+    def recap_get(self, activity_id: int, kind: str) -> Any:
+        with self.connect() as con:
+            row = con.execute("SELECT body FROM recap_cache WHERE id=? AND kind=?", (activity_id, kind)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def recap_put(self, activity_id: int, kind: str, body: Any) -> None:
+        with self.connect() as con:
+            con.execute("INSERT OR REPLACE INTO recap_cache(id, kind, fetched_at, body) VALUES (?,?,?,?)",
+                        (activity_id, kind, now_iso(), json.dumps(body, separators=(",", ":"))))
+
     # ---- sync log / meta ---------------------------------------------------
     def log_start(self) -> int:
         with self.connect() as con:
@@ -252,7 +270,7 @@ class Database:
     # ---- wiping (Settings → Data) --------------------------------------------
     def wipe_garmin_data(self) -> None:
         with self.connect() as con:
-            for table in ("daily", "training", "activities", "raw", "sync_log"):
+            for table in ("daily", "training", "activities", "raw", "sync_log", "recap_cache"):
                 con.execute(f"DELETE FROM {table}")
             con.execute("DELETE FROM meta WHERE k IN ('backfilled', 'connect_backfilled')")
 

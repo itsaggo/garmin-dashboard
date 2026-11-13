@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import ai, auth, config, fitness, garmin_login, notify, prefs, sync, weather
+from . import ai, auth, config, fitness, garmin_login, notify, prefs, recap, sync, weather
 from .db import Database
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -782,6 +782,8 @@ def delete_data(request: Request, body: DeleteIn):
     confirm_limiter.success(who, stamp)
     with sync.data_lock(settings, blocking=True):
         db.wipe_garmin_data()
+        recap.wipe(settings)
+        recap.forget_jobs()
         if body.scope == "everything":
             import shutil
             shutil.rmtree(settings.secrets_dir, ignore_errors=True)
@@ -885,6 +887,57 @@ def ai_models(body: AiModelsIn):
     return {"models": models, "choices": choices, "suggested": ai.suggest_model(body.provider, models)}
 
 
+# ------------------------------------------------------------------ race recap
+class RecapPrepareIn(BaseModel):
+    retry: bool = False
+
+
+def _recap_id(activity_id: int) -> int:
+    if not 0 < activity_id < 2 ** 63:
+        raise HTTPException(404, "No such run")
+    return activity_id
+
+
+@app.get("/api/recap/runs")
+def recap_runs(limit: int = Query(300, ge=1, le=1000)):
+    """Outdoor runs you can make a recap of (nothing is downloaded until you pick one)."""
+    return {"runs": recap.runs(db, limit), "units": prefs.get_all(db)["units"]}
+
+
+@app.get("/api/recap/{activity_id}")
+def recap_get(activity_id: int):
+    aid = _recap_id(activity_id)
+    try:
+        data = recap.payload(settings, db, aid)
+    except recap.RecapError as e:
+        raise HTTPException(404, str(e)) from None
+    if data is None:
+        return {"prepared": False, "job": recap.job_state(aid)}
+    return {"prepared": True, "job": recap.job_state(aid), "recap": data}
+
+
+@app.post("/api/recap/{activity_id}/prepare")
+def recap_prepare(activity_id: int, body: RecapPrepareIn):
+    """Download what this run's recap needs, in the background. Poll /status for progress."""
+    try:
+        return recap.start(settings, db, _recap_id(activity_id), retry=body.retry)
+    except recap.RecapError as e:
+        raise HTTPException(400, str(e)) from None
+
+
+@app.get("/api/recap/{activity_id}/status")
+def recap_status(activity_id: int):
+    return recap.job_state(_recap_id(activity_id))
+
+
+@app.get("/api/recap/{activity_id}/photo")
+def recap_photo(activity_id: int):
+    path = recap.image_path(settings, _recap_id(activity_id))
+    if not path.is_file():
+        raise HTTPException(404, "No aerial photo for this run")
+    return FileResponse(path, media_type="image/jpeg")
+
+
 # ------------------------------------------------------------------ Discord
 @app.post("/api/notify/webhook")
 def save_webhook(request: Request, body: WebhookIn):
@@ -927,6 +980,11 @@ def raw_page():
 @app.get("/setup")
 def setup_page():
     return FileResponse(STATIC / "setup.html")
+
+
+@app.get("/recap")
+def recap_page():
+    return FileResponse(STATIC / "recap.html")
 
 
 @app.get("/settings")

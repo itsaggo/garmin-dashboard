@@ -13,11 +13,16 @@ A private, self-hosted dashboard for your own Garmin data.
   get a written insight every morning, plus a box to ask it questions.
 - **A dashboard you arrange yourself**: drag boxes between the main page, the
   Details tab and Hidden, and resize them. It has a phone layout with a bottom tab bar.
+- **Race recaps for Instagram**: pick a run and get an animated 3D recap over an
+  aerial photo of your course, styled like an arcade game, saved as an MP4 or a
+  picture for Stories, Reels, the feed or a square post.
 
 Everything stays on your server. The only things sent anywhere are the
 requests to Garmin that fetch your data, the weather lookup for the place you
-choose (to Open-Meteo, rounded to about 1 km), and, if you turn on the AI coach,
-a name-free summary to the provider you pick.
+choose (to Open-Meteo, rounded to about 1 km), if you turn on the AI coach,
+a name-free summary to the provider you pick, and, when you make a race recap,
+the rectangle around that run (to USGS for the aerial photo and to OpenStreetMap
+for building outlines; never the route itself).
 
 ![Dashboard screenshot (sample data)](docs/screenshot.png)
 
@@ -131,6 +136,54 @@ key, data under CC BY 4.0). Only the place you pick, rounded to about 1 km, is
 sent to them, at most about once every 30 minutes. The coach and Discord use the
 same saved forecast. It's a rule of thumb for pacing, not a safety guarantee:
 in serious heat, go by how you feel.
+
+## Race recap
+
+The **Recap** tab turns one run into a 14-second animated video:
+
+1. Pick a run from the list (outdoor runs only; search by name or date).
+   Nothing is downloaded until you pick one.
+2. The first time, the server fetches what the recap needs and keeps it:
+   - the run's original activity file, through the official Personal API, for
+     the GPS track, heart rate, cadence and altitude along the run;
+   - an aerial photo of the area from USGS (public domain, US mainland only);
+   - building outlines near the route from OpenStreetMap.
+   This takes from a few seconds to about a minute.
+3. The preview plays in your browser. Choose the format (9:16 for Stories and
+   Reels, 4:5 for the feed, 1:1 square), the ghost runner (your goal time from
+   **Settings → General → Training for a race**, or an even pace that finishes with you),
+   and how much of the start and finish to hide.
+4. **Save video** makes a 1080-wide MP4 (H.264, 30 fps). **Save still** saves a
+   PNG of the frame you're on. On a phone, **Share** opens the share sheet so
+   you can post it straight to Instagram.
+
+What the recap shows:
+
+- The camera starts straight down on the start line over the real aerial photo.
+  A shockwave turns the city into a pixel-art game board and raises the
+  buildings, then the camera tilts into a chase view behind your runner.
+- A coin at every mile (or km) with that split and how it compares to the one
+  before; a **combo** for miles in a row that each got faster; a pink **boost**
+  trail wherever you ran faster than your average pace.
+- A ghost runner at the goal or even pace, with how far ahead or behind you are.
+- Distance, time, current split pace, heart rate as a power meter coloured by
+  zone, cadence and elevation.
+- The finish pulls up over the whole course, then a high-score screen with your
+  time, averages, result against your goal and your three best miles.
+
+Heart-rate zones use Garmin's default bands (60/70/80/90% of max). Max heart
+rate is taken as the highest from your runs in the year before this one.
+
+The video renders on the device you're using, on its graphics card; the server
+only supplies the data. Use a recent Chrome, Edge or Safari (they can encode
+MP4). In 9:16, text stays out of the top and bottom 14% that Instagram Stories
+covers. The photo and map credits are part of every frame, as their licences ask.
+
+**Privacy.** **Hide start & finish** leaves the first and last 0.1 or 0.25 mi
+(200 or 400 m) of the route undrawn, so the video doesn't point at your door.
+The photo still shows the neighbourhood, so for runs from home keep it on. The
+server keeps the 20 most recently used photos (a few MB each) in `/data/recap`.
+**Settings → Your data → Delete stored data** removes them along with the rest.
 
 ## AI coach
 
@@ -370,12 +423,13 @@ app/
   fitness.py   5K estimate, training paces, race card, facts for the AI coach
   weather.py   Open-Meteo forecast, temperature + dew point heat grade
   ai.py        AI providers (Claude, Gemini, ChatGPT, Ollama), daily insight, caps
+  recap.py     race recap: activity file → track, USGS aerial photo, OSM buildings
   notify.py    Discord webhook notifications
   sync.py      official Personal API sync (chunked ranges, backoff, token refresh)
   connect.py   optional Garmin Connect sync (VO2 max, training status, readiness)
   extract.py   Garmin JSON → tidy rows
   db.py        SQLite storage
-  static/      dashboard front end (plain JS + bundled Chart.js)
+  static/      dashboard front end (plain JS + bundled Chart.js, three.js, Mediabunny)
 unraid/        Docker-tab template and icon
 entrypoint.sh  drops to the unprivileged user before the app starts
 tests/         pytest suite + a fake Garmin API (tests/mock_garmin.py)

@@ -339,6 +339,10 @@ fastapi==0.162.0 \
     --hash=sha256:3785963de305dd09912426cb81f2d230fce98ab3521cdfe97265c8d14983128c \
     --hash=sha256:6a22c1e2e6e32e0633ee7e170f00009a29b8228b16feb219ee42f32fd8d88a8f
     # via -r requirements.in
+fitdecode==0.11.0 \
+    --hash=sha256:52d920e50eaa76eb065b20bfd4e42f72195e894a079098dacc1cafa908cd4b83 \
+    --hash=sha256:a1bdb9b4d1e9ebac0001fc58c22fe07a3f9967ca4e13258c6ef99cdb8d697a78
+    # via -r requirements.in
 garmin-connect-personal-api-python==1.0.0 \
     --hash=sha256:75a3b64083b2f176ca4d68cfb5bf731fcb1aaa82c63fe9239dbd5ec7215a08aa \
     --hash=sha256:a709a7836651f173f7b82a22074cb96def9caf7c17ee41fdfaa6d40657c5711b

@@ -32,10 +32,10 @@ def _request_sync(s: config.Settings) -> None:
         pass
 
 
-def _new_password() -> str:
+def _new_password(username: str = "") -> str:
     while True:
         pw = getpass.getpass("New password: ")
-        problem = auth.password_problem(pw)
+        problem = auth.password_problem(pw) or auth.weak_password_problem(pw, username)
         if problem:
             print(f"  {problem}")
             continue
@@ -55,7 +55,7 @@ def cmd_reset_password(s: config.Settings) -> None:
     if auth.username_problem(new_name):
         print(f"  {auth.username_problem(new_name)}")
         return
-    auth.set_password(s, _new_password(), username=new_name)
+    auth.set_password(s, _new_password(new_name), username=new_name)
     removed = Database(s.db_path).session_delete_all()
     print("  ✓ Password saved." + (f" Signed out {removed} session(s)." if removed else ""))
 

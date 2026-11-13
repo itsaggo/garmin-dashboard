@@ -184,7 +184,7 @@ def test_mfa_code_format_validated(signed_in):
 def test_change_password_keeps_this_session_only(signed_in):
     other = new_client()
     login(other)
-    bad = signed_in.post("/api/account/password", json={"current": "wrong", "new": "x" * 20}, headers=JSON)
+    bad = signed_in.post("/api/account/password", json={"current": "wrong", "new": "another long passphrase"}, headers=JSON)
     assert bad.status_code == 400
     short = signed_in.post("/api/account/password", json={"current": PASSWORD, "new": "short"}, headers=JSON)
     assert short.status_code == 422

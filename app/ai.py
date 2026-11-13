@@ -14,7 +14,7 @@ import urllib.request
 from datetime import date, datetime
 from typing import Any
 
-from . import config, fitness, prefs as prefs_mod
+from . import config, fitness, net, prefs as prefs_mod
 from .db import Database
 
 PROVIDERS: dict[str, dict[str, Any]] = {
@@ -82,10 +82,8 @@ def _request(url: str, body: dict | None, headers: dict, timeout: float, direct:
     req = urllib.request.Request(url, data=json.dumps(body).encode() if body is not None else None,
                                  headers={"Content-Type": "application/json", **headers},
                                  method="POST" if body is not None else "GET")
-    handlers = [urllib.request.ProxyHandler({})] if direct else []
-    opener = urllib.request.build_opener(*handlers)
     try:
-        with opener.open(req, timeout=timeout) as resp:
+        with net.open_url(req, timeout, direct=direct) as resp:
             raw = resp.read(MAX_RESPONSE + 1)
     except urllib.error.HTTPError as e:
         detail = ""
@@ -100,15 +98,21 @@ def _request(url: str, body: dict | None, headers: dict, timeout: float, direct:
             raise AIError("The provider says you're rate-limited or out of credit.") from e
         if e.code == 404:
             raise AIError("Model not found. Pick another model in Settings.") from e
-        raise AIError(f"The provider returned an error ({e.code})" + (f": {str(detail)[:200]}" if detail else ".")) from e
+        if 300 <= e.code < 400:
+            raise AIError("That address answered with a redirect, which isn't followed. Check the address.") from e
+        # For a LAN address the owner typed (Ollama), never pass the other side's words back to the browser.
+        raise AIError(f"The provider returned an error ({e.code})" + (f": {str(detail)[:200]}" if detail and not direct else ".")) from e
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         raise AIError(f"Couldn't reach the provider ({type(e).__name__}).") from e
     if len(raw) > MAX_RESPONSE:
         raise AIError("The provider's response was unexpectedly large.")
     try:
-        return json.loads(raw.decode("utf-8", "replace"))
+        data = json.loads(raw.decode("utf-8", "replace"))
     except ValueError as e:
         raise AIError("The provider sent a response that isn't JSON.") from e
+    if not isinstance(data, dict):
+        raise AIError("The provider sent a response in an unexpected shape.")
+    return data
 
 
 def _target(s: config.Settings, p: dict) -> tuple[str, str | None]:
@@ -129,27 +133,63 @@ def _target(s: config.Settings, p: dict) -> tuple[str, str | None]:
 _EXCLUDE = re.compile(r"audio|realtime|tts|transcri|embed|image|dall|whisper|moderation|search|computer|codex|vision-preview|instruct", re.I)
 
 
-def list_models(provider: str, key: str | None, ollama_url: str | None = None) -> list[str]:
+def _clean_label(v: Any, fallback: str) -> str:
+    t = " ".join(str(v).split())[:80] if isinstance(v, str) else ""
+    return t or fallback
+
+
+def _size(n: Any) -> str:
+    if not isinstance(n, (int, float)) or isinstance(n, bool) or n <= 0:
+        return ""
+    return f"{n / 1e9:.1f} GB" if n >= 1e9 else f"{n / 1e6:.0f} MB"
+
+
+def model_choices(provider: str, key: str | None, ollama_url: str | None = None) -> list[dict]:
+    """The chat models this key (or Ollama server) can use: [{"id", "label", "note"}], newest first where known."""
+    out: list[dict] = []
     if provider == "claude":
         data = _request(f"{PROVIDERS['claude']['base']}/v1/models?limit=100",
                         None, {"x-api-key": key, "anthropic-version": "2023-06-01"}, 20)
-        models = [m.get("id") for m in data.get("data", []) if isinstance(m, dict)]
-        models = [m for m in models if m and m.startswith("claude")]
+        for m in data.get("data") or []:
+            if isinstance(m, dict) and isinstance(m.get("id"), str) and m["id"].startswith("claude"):
+                out.append({"id": m["id"], "label": _clean_label(m.get("display_name"), m["id"]),
+                            "note": str(m.get("created_at") or "")[:10]})
     elif provider == "openai":
         data = _request(f"{PROVIDERS['openai']['base']}/v1/models", None, {"Authorization": f"Bearer {key}"}, 20)
-        models = sorted((m.get("id") for m in data.get("data", []) if isinstance(m, dict)), reverse=True)
-        models = [m for m in models if m and re.match(r"^(gpt-|o\d|chatgpt-)", m) and not _EXCLUDE.search(m)]
+        ms = [m for m in data.get("data") or [] if isinstance(m, dict) and isinstance(m.get("id"), str)]
+        ms = [m for m in ms if re.match(r"^(gpt-|o\d|chatgpt-)", m["id"]) and not _EXCLUDE.search(m["id"])]
+        ms.sort(key=lambda m: (m.get("created") if isinstance(m.get("created"), int) else 0, m["id"]), reverse=True)
+        out = [{"id": m["id"], "label": m["id"], "note": ""} for m in ms]
     elif provider == "gemini":
         data = _request(f"{PROVIDERS['gemini']['base']}/v1beta/models?pageSize=200", None, {"x-goog-api-key": key}, 20)
-        models = [m.get("name", "").removeprefix("models/") for m in data.get("models", [])
-                  if isinstance(m, dict) and "generateContent" in (m.get("supportedGenerationMethods") or [])]
-        models = [m for m in models if m.startswith("gemini") and not _EXCLUDE.search(m)]
+        for m in data.get("models") or []:
+            if not isinstance(m, dict) or "generateContent" not in (m.get("supportedGenerationMethods") or []):
+                continue
+            mid = str(m.get("name", "")).removeprefix("models/")
+            if mid.startswith("gemini") and not _EXCLUDE.search(mid):
+                out.append({"id": mid, "label": _clean_label(m.get("displayName"), mid), "note": ""})
     elif provider == "ollama":
         data = _request(f"{ollama_url}/api/tags", None, {}, 8, direct=True)
-        models = [m.get("name") for m in data.get("models", []) if isinstance(m, dict)]
+        for m in data.get("models") or []:
+            if isinstance(m, dict) and isinstance(m.get("name"), str):
+                details = m.get("details") if isinstance(m.get("details"), dict) else {}
+                note = " · ".join(x for x in (_clean_label(details.get("parameter_size"), ""), _size(m.get("size"))) if x)
+                out.append({"id": m["name"], "label": m["name"], "note": note})
     else:
         raise AIError("Unknown provider.")
-    return [m for m in models if m][:150]
+    seen, uniq = set(), []
+    for c in out:
+        if c["id"] and c["id"] not in seen and _MODEL_ID.match(c["id"]):
+            seen.add(c["id"])
+            uniq.append(c)
+    return uniq[:150]
+
+
+_MODEL_ID = re.compile(r"^[A-Za-z0-9._:/-]{1,120}$")  # same rule Settings uses to save a model
+
+
+def list_models(provider: str, key: str | None, ollama_url: str | None = None) -> list[str]:
+    return [c["id"] for c in model_choices(provider, key, ollama_url)]
 
 
 def suggest_model(provider: str, models: list[str]) -> str | None:
@@ -234,12 +274,16 @@ def _usage(db: Database) -> dict:
     return u
 
 
+_spend_lock = threading.Lock()
+
+
 def _spend(db: Database, kind: str) -> None:
-    u = _usage(db)
-    if u.get(kind, 0) >= LIMITS[kind]:
-        raise AIError(f"Daily limit reached ({LIMITS[kind]} per day) to keep your AI bill small. Try again tomorrow.")
-    u[kind] = u.get(kind, 0) + 1
-    db.set_meta("ai_usage", json.dumps(u))
+    with _spend_lock:  # check and count together, so a burst of requests can't slip past the cap
+        u = _usage(db)
+        if u.get(kind, 0) >= LIMITS[kind]:
+            raise AIError(f"Daily limit reached ({LIMITS[kind]} per day) to keep your AI bill small. Try again tomorrow.")
+        u[kind] = u.get(kind, 0) + 1
+        db.set_meta("ai_usage", json.dumps(u))
 
 
 # ------------------------------------------------------------------ public

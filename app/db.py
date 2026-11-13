@@ -279,9 +279,12 @@ class Database:
             con.execute("DELETE FROM sessions WHERE token_hash=?", (token_hash,))
 
     def session_delete_all_except(self, keep_hash: str) -> int:
+        """Sign out every other browser. (Known-device marks stay: they only pick which sign-in limit
+        applies, and clearing them would lock this browser out during an attack.)"""
         with self.connect() as con:
             return con.execute("DELETE FROM sessions WHERE token_hash != ?", (keep_hash,)).rowcount
 
     def session_delete_all(self) -> int:
         with self.connect() as con:
+            con.execute("DELETE FROM meta WHERE k='devices'")
             return con.execute("DELETE FROM sessions").rowcount

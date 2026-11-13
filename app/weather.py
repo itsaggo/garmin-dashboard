@@ -28,7 +28,7 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any
 
-from . import prefs as prefs_mod
+from . import net, prefs as prefs_mod
 from .db import Database
 
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
@@ -95,7 +95,7 @@ def _get_json(url: str, params: dict[str, Any]) -> Any:
     full = url + "?" + urllib.parse.urlencode(params)
     req = urllib.request.Request(full, headers={"User-Agent": "garmin-dashboard (self-hosted)", "Accept": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with net.open_url(req, 10) as resp:
             body = resp.read(MAX_BYTES + 1)
     except urllib.error.HTTPError as e:
         raise WeatherError(f"The weather service returned an error ({e.code}).") from e

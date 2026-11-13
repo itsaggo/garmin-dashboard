@@ -4,6 +4,7 @@ Nothing secret lives here: keys, passwords and sign-in tokens are separate 0600 
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import math
 import os
@@ -204,8 +205,15 @@ def validate(changes: dict[str, Any]) -> dict[str, Any]:
             if value:
                 parts = urlsplit(value)
                 if parts.scheme not in ("http", "https") or not parts.hostname or parts.username or parts.password \
-                        or parts.query or parts.fragment or len(value) > 200:
+                        or parts.query or parts.fragment or parts.path not in ("", "/") or len(value) > 200:
                     raise PrefError(key, "Use an address like http://192.168.4.23:11434")
+                try:
+                    link_local = ipaddress.ip_address(parts.hostname).is_link_local
+                except ValueError:
+                    link_local = False  # a host name, not an IP
+                if link_local:
+                    raise PrefError(key, "That address range isn't allowed. Use your Ollama server's LAN address.")
+                value = f"{parts.scheme}://{parts.netloc}"
         elif key == "weather_place":
             value = " ".join(str(value or "").split())
             if len(value) > 120 or any(ord(ch) < 32 for ch in value):

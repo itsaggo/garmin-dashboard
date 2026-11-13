@@ -30,6 +30,13 @@ prefs.apply_timezone(prefs.get_all(db)["timezone"])
 garmin_login.cleanup_stale_staging(settings)
 STATIC = Path(__file__).parent / "static"
 limiter = auth.LoginLimiter()
+# Browsers that have signed in before are limited per device, apart from strangers (see auth.py).
+device_limiter = auth.LoginLimiter(per_ip=5, total=1_000_000)
+# Password confirmations by someone already signed in (change password, delete data) are counted per
+# session, so strangers filling the sign-in limit can't block them.
+confirm_limiter = auth.LoginLimiter(per_ip=5, total=1_000_000)
+_FORWARD_HEADERS = ("cf-connecting-ip", "cf-ray", "x-forwarded-for", "x-real-ip", "forwarded", "x-forwarded-host")
+MAX_BODY_BYTES = 128 * 1024  # the largest real request (a saved layout) is a few kB
 garmin_limiter = auth.LoginLimiter(per_ip=5, total=8)  # Garmin sign-ins / key checks (Garmin locks out abusers)
 ai_limiter = auth.LoginLimiter(per_ip=10, total=20)  # AI key checks
 _stop = threading.Event()
@@ -128,6 +135,106 @@ app = FastAPI(title="Garmin Dashboard", lifespan=lifespan, docs_url=None, redoc_
 
 
 # ------------------------------------------------------------------ middleware
+class _TooLarge(Exception):
+    pass
+
+
+class BodyLimit:
+    """Refuse request bodies over MAX_BODY_BYTES before they are read into memory.
+    Nothing this app accepts is large, so a big upload is only ever an attempt to exhaust memory."""
+
+    def __init__(self, inner, max_bytes: int):
+        self.inner, self.max = inner, max_bytes
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.inner(scope, receive, send)
+        started = False
+
+        async def reject():
+            if not started:
+                body = b"Request too large"
+                await send({"type": "http.response.start", "status": 413, "headers": [
+                    (b"content-type", b"text/plain; charset=utf-8"), (b"content-length", str(len(body)).encode()),
+                    (b"connection", b"close"), (b"cache-control", b"no-store")]})
+                await send({"type": "http.response.body", "body": body})
+
+        for name, value in scope.get("headers") or []:
+            if name == b"content-length":
+                try:
+                    declared = int(value)
+                except ValueError:
+                    declared = self.max + 1
+                if declared > self.max:
+                    return await reject()
+        seen = 0
+
+        async def limited_receive():
+            nonlocal seen
+            message = await receive()
+            if message["type"] == "http.request":
+                seen += len(message.get("body") or b"")
+                if seen > self.max:
+                    raise _TooLarge()
+            return message
+
+        async def tracking_send(message):
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self.inner(scope, limited_receive, tracking_send)
+        except _TooLarge:
+            await reject()
+
+
+def _via_proxy(request: Request) -> bool:
+    """True when the request was passed on by a reverse proxy or tunnel listed in TRUSTED_PROXIES
+    (so it came from outside, and the proxy's note about who the visitor is can be believed)."""
+    if not settings.trusted_proxies or not request.client:
+        return False
+    try:
+        peer = ipaddress.ip_address(request.client.host)
+    except ValueError:
+        return False
+    if peer.version == 6 and peer.ipv4_mapped:
+        peer = peer.ipv4_mapped
+    if not any(peer in net for net in settings.trusted_proxies):
+        return False
+    return bool(request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for"))
+
+
+_warned_peers: set = set()
+
+
+def _forwarded(request: Request) -> bool:
+    """Did this request pass through any proxy or tunnel? Those add headers a visitor can't remove and a
+    browser on the home network never sends. Used to refuse first-run account creation from outside even
+    when TRUSTED_PROXIES is missing or wrong (and to tell the owner which address to put there)."""
+    if not any(request.headers.get(h) for h in _FORWARD_HEADERS):
+        return False
+    peer = request.client.host if request.client else "unknown"
+    if not _via_proxy(request) and peer not in _warned_peers and len(_warned_peers) < 20:
+        _warned_peers.add(peer)
+        log.warning("Requests are arriving through a proxy at %s that isn't in TRUSTED_PROXIES. Add that address "
+                    "to 'Trusted proxy addresses' so sign-in limits count real visitors.", peer)
+    return True
+
+
+def _is_https(request: Request) -> bool:
+    """Is the visitor's browser on HTTPS? Believing a false "yes" only makes cookies stricter, so the
+    proxy's X-Forwarded-Proto note doesn't need to come from a trusted address."""
+    if settings.cookie_secure or request.url.scheme == "https":
+        return True
+    proto = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
+    if proto == "https":
+        return True
+    origin = request.headers.get("origin") or ""
+    return origin.lower().startswith("https://") and urlsplit(origin).netloc.lower() == request.headers.get("host", "").lower()
+
+
 def _host_allowed(host_header: str) -> bool:
     """Accept requests addressed to an IP address, localhost, or a name listed in
     ALLOWED_HOSTS. Blocks DNS-rebinding attacks, where a malicious site points
@@ -156,6 +263,9 @@ def _same_origin(request: Request) -> bool:
         return False
     parts = urlsplit(origin)
     host = request.headers.get("host", "")
+    proto = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
+    if (settings.cookie_secure or proto == "https" or request.url.scheme == "https") and parts.scheme.lower() != "https":
+        return False  # the site is served over HTTPS, so a plain-http page is never "the same site"
     if host and parts.netloc.lower() == host.lower():
         return True
     # Behind a reverse proxy: trust only exact origins (scheme, name and port) listed in ALLOWED_ORIGINS.
@@ -172,7 +282,7 @@ async def guard(request: Request, call_next):
         return Response(
             f"This address ({name}) isn't allowed. Open the dashboard by IP address, or add "
             f"{name} to the container's 'Allowed host names' setting.",
-            status_code=400, media_type="text/plain", headers=SECURITY_HEADERS,
+            status_code=400, media_type="text/plain", headers={**SECURITY_HEADERS, "Cache-Control": "no-store"},
         )
     has_account = auth.account_exists(settings)
     if request.method not in ("GET", "HEAD", "POST"):
@@ -184,7 +294,13 @@ async def guard(request: Request, call_next):
     elif path in PUBLIC_PATHS:
         response = await call_next(request)
     elif not has_account:
-        if path in FIRST_RUN_PATHS:
+        if path in FIRST_RUN_PATHS and (_via_proxy(request) or _forwarded(request)):
+            # No account yet and the visitor is coming in from the internet: don't let a stranger claim it.
+            response = HTMLResponse(_page("Finish setup at home", "<p>This dashboard has no account yet. For safety, the "
+                                          "account can only be created from your home network: open the dashboard by "
+                                          "its local address (your server's IP and port) and create it there.</p>"),
+                                    status_code=403)
+        elif path in FIRST_RUN_PATHS:
             response = await call_next(request)
         elif path.startswith("/api/"):
             response = JSONResponse({"detail": "Create your account first"}, status_code=503)
@@ -206,7 +322,7 @@ async def guard(request: Request, call_next):
         response.headers["Cache-Control"] = "no-cache"  # revalidate, so updates show up right away
     else:
         response.headers["Cache-Control"] = "no-store"
-    if settings.cookie_secure:
+    if _is_https(request):
         response.headers["Strict-Transport-Security"] = "max-age=31536000"
     return response
 
@@ -223,14 +339,33 @@ def _page(title: str, body: str) -> str:
 
 
 def _client_ip(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
+    """Who to count a rate limit against. Behind a trusted proxy or tunnel that is the visitor it
+    reports (Cloudflare's CF-Connecting-IP, else the last X-Forwarded-For entry, which the proxy
+    itself added); otherwise the address that connected. Headers from anyone else are ignored."""
+    peer = request.client.host if request.client else "unknown"
+    if _via_proxy(request):
+        # CF-Connecting-IP only counts on requests that really came through Cloudflare (it adds CF-Ray and
+        # overwrites both); behind other proxies a visitor could invent it, so the proxy's own entry is used.
+        cf = request.headers.get("cf-connecting-ip") if request.headers.get("cf-ray") else None
+        for claimed in (cf, (request.headers.get("x-forwarded-for") or "").split(",")[-1]):
+            bucket = auth.ip_bucket(claimed or "")
+            if bucket != "unknown":
+                return bucket
+    return auth.ip_bucket(peer)
 
 
-def _start_session(response: Response) -> None:
+def _start_session(request: Request, response: Response) -> None:
     token = auth.new_session(db)
     response.set_cookie(
         auth.SESSION_COOKIE, token, max_age=auth.SESSION_DAYS * 86400,
-        httponly=True, samesite="strict", secure=settings.cookie_secure, path="/",
+        httponly=True, samesite="strict", secure=_is_https(request), path="/",
+    )
+
+
+def _remember_device(request: Request, response: Response) -> None:
+    response.set_cookie(
+        auth.DEVICE_COOKIE, auth.new_device(db), max_age=auth.DEVICE_DAYS * 86400,
+        httponly=True, samesite="strict", secure=_is_https(request), path="/login",  # only ever sent to the sign-in page
     )
 
 
@@ -247,6 +382,7 @@ _WELCOME_MESSAGES = {
     "short": auth.password_problem("") or "",
     "long": f"Use at most {auth.MAX_PASSWORD_LENGTH} characters.",
     "match": "The two passwords didn't match.",
+    "weak": "That password is too easy to guess. Use a short sentence only you would think of, without your username.",
     "busy": "The server is busy. Try again in a moment.",
     "locked": "Too many attempts. Wait 15 minutes and try again.",
 }
@@ -284,6 +420,8 @@ def welcome_submit(request: Request, username: str = Form(..., max_length=64),
         return RedirectResponse("/welcome?m=long", status_code=303)
     if password != password2:
         return RedirectResponse("/welcome?m=match", status_code=303)
+    if auth.weak_password_problem(password, username):
+        return RedirectResponse("/welcome?m=weak", status_code=303)
     stamp = limiter.try_begin(_client_ip(request))
     if stamp is None:
         return RedirectResponse("/welcome?m=locked", status_code=303)
@@ -295,7 +433,8 @@ def welcome_submit(request: Request, username: str = Form(..., max_length=64),
         return RedirectResponse("/login", status_code=303)
     log.info("Dashboard account created")
     resp = RedirectResponse("/setup", status_code=303)
-    _start_session(resp)
+    _start_session(request, resp)
+    _remember_device(request, resp)
     return resp
 
 
@@ -329,19 +468,25 @@ def login_submit(request: Request, username: str = Form(..., max_length=64),
     ip = _client_ip(request)
     if not auth.account_exists(settings):
         return RedirectResponse("/welcome", status_code=303)
-    stamp = limiter.try_begin(ip)  # counted before hashing, so bursts can't bypass the limit
+    # A browser that has signed in here before is counted on its own, so strangers filling up the
+    # shared limit can't lock the owner out. Everyone else shares the per-address and overall limits.
+    device = auth.device_key(db, request.cookies.get(auth.DEVICE_COOKIE))
+    lim, who = (device_limiter, device) if device else (limiter, ip)
+    stamp = lim.try_begin(who)  # counted before hashing, so bursts can't bypass the limit
     if stamp is None:
         return RedirectResponse("/login?m=locked", status_code=303)
     ok = auth.limited(auth.check_login, settings, username, password)
     if ok is None:
-        limiter.release(stamp)  # the password wasn't checked, so don't charge an attempt
+        lim.release(stamp)  # the password wasn't checked, so don't charge an attempt
         return RedirectResponse("/login?m=busy", status_code=303)
     if not ok:
-        log.warning("Failed dashboard login from %s", ip)
+        log.warning("Failed dashboard login from %s%s", ip, " (known device)" if device else "")
         return RedirectResponse("/login?m=bad", status_code=303)
-    limiter.success(ip, stamp)
+    lim.success(who, stamp)
     resp = RedirectResponse("/", status_code=303)
-    _start_session(resp)
+    _start_session(request, resp)
+    if not device:
+        _remember_device(request, resp)
     return resp
 
 
@@ -349,7 +494,7 @@ def login_submit(request: Request, username: str = Form(..., max_length=64),
 def logout(request: Request):
     auth.end_session(db, request.cookies.get(auth.SESSION_COOKIE))
     resp = RedirectResponse("/login?m=out", status_code=303)
-    resp.delete_cookie(auth.SESSION_COOKIE, path="/", samesite="strict", httponly=True, secure=settings.cookie_secure)
+    resp.delete_cookie(auth.SESSION_COOKIE, path="/", samesite="strict", httponly=True, secure=_is_https(request))
     return resp
 
 
@@ -582,20 +727,20 @@ def connect_remove():
 
 @app.post("/api/account/password")
 def change_password(request: Request, body: PasswordChangeIn):
-    problem = auth.password_problem(body.new)
+    problem = auth.password_problem(body.new) or auth.weak_password_problem(body.new, auth.current_username(settings) or "")
     if problem:
         raise HTTPException(422, problem)
-    ip = _client_ip(request)
-    stamp = limiter.try_begin(ip)
+    who = "session:" + auth._token_hash(request.cookies.get(auth.SESSION_COOKIE) or "")[:32]
+    stamp = confirm_limiter.try_begin(who)
     if stamp is None:
         raise HTTPException(429, "Too many attempts. Wait 15 minutes and try again.")
     ok = auth.limited(auth.check_password, settings, body.current)
     if ok is None:
-        limiter.release(stamp)
+        confirm_limiter.release(stamp)
         raise HTTPException(503, "The server is busy. Try again in a moment.")
     if not ok:
         raise HTTPException(400, "Your current password didn't match.")
-    limiter.success(ip, stamp)
+    confirm_limiter.success(who, stamp)
     auth.set_password(settings, body.new)
     removed = auth.end_other_sessions(db, request.cookies.get(auth.SESSION_COOKIE))
     return {"ok": True, "signed_out": removed}
@@ -624,17 +769,17 @@ def export_data():
 
 @app.post("/api/data/delete")
 def delete_data(request: Request, body: DeleteIn):
-    ip = _client_ip(request)
-    stamp = limiter.try_begin(ip)
+    who = "session:" + auth._token_hash(request.cookies.get(auth.SESSION_COOKIE) or "")[:32]
+    stamp = confirm_limiter.try_begin(who)
     if stamp is None:
         raise HTTPException(429, "Too many attempts. Wait 15 minutes and try again.")
     ok = auth.limited(auth.check_password, settings, body.password)
     if ok is None:
-        limiter.release(stamp)
+        confirm_limiter.release(stamp)
         raise HTTPException(503, "The server is busy. Try again in a moment.")
     if not ok:
         raise HTTPException(400, "Password didn't match. Nothing was deleted.")
-    limiter.success(ip, stamp)
+    confirm_limiter.success(who, stamp)
     with sync.data_lock(settings, blocking=True):
         db.wipe_garmin_data()
         if body.scope == "everything":
@@ -645,7 +790,7 @@ def delete_data(request: Request, body: DeleteIn):
     log.warning("Data deleted from the dashboard (scope: %s)", body.scope)
     if body.scope == "everything":
         resp = JSONResponse({"ok": True, "next": "/welcome"})
-        resp.delete_cookie(auth.SESSION_COOKIE, path="/", samesite="strict", httponly=True, secure=settings.cookie_secure)
+        resp.delete_cookie(auth.SESSION_COOKIE, path="/", samesite="strict", httponly=True, secure=_is_https(request))
         return resp
     return {"ok": True}
 
@@ -702,12 +847,13 @@ def save_ai_key(request: Request, body: AiKeyIn):
     if stamp is None:
         raise HTTPException(429, "Too many attempts. Wait 15 minutes.")
     try:
-        models = ai.list_models(body.provider, key)
+        choices = ai.model_choices(body.provider, key)
     except ai.AIError as e:
         raise HTTPException(400, str(e)) from e
     ai_limiter.success(_client_ip(request), stamp)
     ai.save_key(settings, body.provider, key)
-    return {"ok": True, "models": models, "suggested": ai.suggest_model(body.provider, models)}
+    models = [c["id"] for c in choices]
+    return {"ok": True, "models": models, "choices": choices, "suggested": ai.suggest_model(body.provider, models)}
 
 
 @app.post("/api/ai/key/remove")
@@ -732,10 +878,11 @@ def ai_models(body: AiModelsIn):
         if not key:
             raise HTTPException(400, "Save an API key for this provider first.")
     try:
-        models = ai.list_models(body.provider, key, url)
+        choices = ai.model_choices(body.provider, key, url)
     except ai.AIError as e:
         raise HTTPException(502, str(e)) from e
-    return {"models": models, "suggested": ai.suggest_model(body.provider, models)}
+    models = [c["id"] for c in choices]
+    return {"models": models, "choices": choices, "suggested": ai.suggest_model(body.provider, models)}
 
 
 # ------------------------------------------------------------------ Discord
@@ -794,4 +941,12 @@ def index():
     return FileResponse(STATIC / "index.html")
 
 
+@app.exception_handler(Exception)
+async def unexpected_error(request: Request, exc: Exception):
+    log.exception("Unhandled error on %s", request.url.path)
+    return JSONResponse({"detail": "Something went wrong on the server."}, status_code=500,
+                        headers={**SECURITY_HEADERS, "Cache-Control": "no-store"})
+
+
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+app.add_middleware(BodyLimit, max_bytes=MAX_BODY_BYTES)

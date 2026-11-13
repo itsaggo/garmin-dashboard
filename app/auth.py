@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import re
@@ -54,6 +55,25 @@ def password_problem(password: str) -> str | None:
         return f"Use at least {MIN_PASSWORD_LENGTH} characters (a short sentence works well)."
     if len(password) > MAX_PASSWORD_LENGTH:
         return f"Use at most {MAX_PASSWORD_LENGTH} characters."
+    return None
+
+
+_COMMON = {"password", "passwort", "qwerty", "letmein", "welcome", "admin", "garmin", "dashboard", "iloveyou", "123456"}
+
+
+def weak_password_problem(password: str, username: str = "") -> str | None:
+    """Catch passwords that are long but trivially guessable (checked when one is created or changed)."""
+    low = password.lower()
+    if len(set(low)) < 5:
+        return "That password repeats the same few characters. Use a short sentence instead."
+    if username and len(username) >= 3 and username.lower() in low:
+        return "Don't put your username in the password."
+    stripped = low
+    for word in sorted(_COMMON, key=len, reverse=True):
+        stripped = stripped.replace(word, "")
+    if len(stripped.strip("0123456789!@#$%^&*()-_=+.,? ")) < 4 or low in "abcdefghijklmnopqrstuvwxyz" * 2 \
+            or low in "12345678901234567890123456789012345678901234567890":
+        return "That password is too easy to guess. Use a short sentence only you would think of."
     return None
 
 
@@ -165,6 +185,64 @@ def end_session(db: Database, token: str | None) -> None:
 
 def end_other_sessions(db: Database, keep_token: str | None) -> int:
     return db.session_delete_all_except(_token_hash(keep_token) if keep_token else "")
+
+
+# ------------------------------------------------------------------ known devices
+# A browser that has signed in successfully gets a long-lived "known device" cookie. Sign-in attempts
+# from known devices are rate-limited per device instead of sharing the limit for strangers, so someone
+# hammering the login page from the internet can't lock the owner out of their own dashboard.
+DEVICE_COOKIE = "gd_device"
+DEVICE_DAYS = 180
+_MAX_DEVICES = 20
+
+
+def _devices(db: Database) -> dict:
+    try:
+        d = json.loads(db.get_meta("devices") or "{}")
+    except ValueError:
+        return {}
+    now = int(time.time())
+    return {k: v for k, v in d.items() if isinstance(k, str) and isinstance(v, int) and v > now} if isinstance(d, dict) else {}
+
+
+_device_lock = threading.Lock()
+
+
+def new_device(db: Database) -> str:
+    token = secrets.token_urlsafe(32)
+    with _device_lock:  # two sign-ins at once must not overwrite each other's mark
+        d = _devices(db)
+        while len(d) >= _MAX_DEVICES:  # forget the one that expires soonest
+            d.pop(min(d, key=d.get))
+        d[_token_hash(token)] = int(time.time()) + DEVICE_DAYS * 86400
+        db.set_meta("devices", json.dumps(d))
+    return token
+
+
+def device_key(db: Database, token: str | None) -> str | None:
+    """A stable limiter key for a known device, or None for a stranger."""
+    if not token or len(token) > 200:
+        return None
+    h = _token_hash(token)
+    return "device:" + h[:32] if h in _devices(db) else None
+
+
+def forget_devices(db: Database) -> None:
+    db.delete_meta("devices")
+
+
+def ip_bucket(ip: str) -> str:
+    """The address a rate limit is counted against. One IPv6 customer usually owns a whole /64,
+    so those are counted together; IPv4 (and IPv4 written as IPv6) is counted per address."""
+    try:
+        addr = ipaddress.ip_address(ip.strip())
+    except ValueError:
+        return "unknown"
+    if addr.version == 6:
+        if addr.ipv4_mapped:
+            return str(addr.ipv4_mapped)
+        return str(ipaddress.ip_network(f"{addr}/64", strict=False).network_address) + "/64"
+    return str(addr)
 
 
 class LoginLimiter:

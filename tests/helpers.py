@@ -22,6 +22,10 @@ def reset():
     for prov in ("claude", "gemini", "openai"):
         (s.secrets_dir / f"ai-key-{prov}").unlink(missing_ok=True)
     main.limiter = auth.LoginLimiter()
+    main.device_limiter = auth.LoginLimiter(per_ip=5, total=1_000_000)
+    main.db.delete_meta("devices")
+    main.confirm_limiter = auth.LoginLimiter(per_ip=5, total=1_000_000)
+    main._warned_peers.clear()
     main.garmin_limiter = auth.LoginLimiter(per_ip=5, total=8)
     main._last_manual_sync = 0.0
     main.ai_limiter = auth.LoginLimiter(per_ip=10, total=20)

@@ -233,14 +233,13 @@ What it can't protect against, and what you should do:
 - **Plain HTTP on your LAN.** Traffic on your home network isn't encrypted.
   Don't port-forward 8099 on your router. For access away from home, use
   **Tailscale** or **WireGuard** (Unraid has both) instead of exposing the port.
-  - **Behind an HTTPS reverse proxy:** set *Secure cookies* to `true`, and set
-    *HTTPS reverse-proxy address* to its exact public address, e.g.
-    `https://garmin.example.com`. The proxy also has to pass the original Host
-    header. Nginx Proxy Manager and SWAG already do. For plain nginx, add
-    `proxy_set_header Host $host;` and put the domain in *Allowed host names*.
-- **The lockout is shared.** The 20-tries limit applies to everyone, so a device
-  on your network spamming wrong passwords could lock you out for 15 minutes
-  too. Restarting the container clears it.
+  - **Behind an HTTPS reverse proxy or tunnel:** see
+    [Putting it on the internet](#putting-it-on-the-internet) below.
+- **The lockout for strangers is shared.** Browsers that have never signed in
+  share a limit of 20 tries per 15 minutes (5 per address). A browser that has
+  signed in before is counted on its own, so someone spamming wrong passwords
+  can't lock you out of a device you already use. A brand-new device would have
+  to wait until the spam stops. Restarting the container clears the limits.
 - **Anyone with root on your Unraid server can read the data folder.** That's
   true of every app on the server, so keep your Unraid root password strong.
 - **The Garmin Connect part is unofficial.** It uses the community
@@ -322,12 +321,49 @@ folder to `/mnt/user/appdata/garmin-dashboard` and run
 Re-run the script to apply changes. A container made this way appears in the
 Docker tab without an icon or update checks.
 
+## Putting it on the internet
+
+The safest way to reach the dashboard away from home is a private network like
+Tailscale or WireGuard. If you'd rather give it a public address, for example
+with a **Cloudflare Tunnel**, set these on the container (Unraid: edit the
+container, *Show more settings*):
+
+| Setting | Value |
+|---|---|
+| Allowed host names | your public name, e.g. `garmin.example.com` |
+| Trusted proxy addresses | where the tunnel or proxy connects from, e.g. `172.17.0.0/16` (Docker's default network) or the proxy container's own IP |
+
+With *Trusted proxy addresses* set, the dashboard:
+- counts login attempts per real visitor (from Cloudflare's `CF-Connecting-IP`,
+  or the last `X-Forwarded-For` entry) instead of treating the whole internet
+  as one address;
+- refuses to create the first account from outside, so nobody can claim a
+  freshly installed or wiped dashboard before you do. Create the account from
+  your home network, by the server's IP.
+
+Cookies are marked secure and HTTPS is enforced (HSTS) automatically whenever
+you sign in over HTTPS. The proxy has to pass the original `Host` header;
+Cloudflare Tunnel, Nginx Proxy Manager and SWAG do.
+
+Also recommended, on the Cloudflare side:
+- **Cloudflare Access** (Zero Trust → Access → Applications) in front of the
+  hostname, allowing only your own email address. Visitors then have to pass
+  Cloudflare's sign-in before they can even see the dashboard's login page. It
+  is free for personal use and is the single biggest improvement you can make.
+- **Always Use HTTPS** on, and a rate-limiting rule on `/login`.
+- Don't publish the container's port on your router as well. The tunnel is the
+  only way in from outside.
+
+The dashboard has one password and no two-factor sign-in of its own, so on a
+public address use a long, unique passphrase.
+
 ## Project layout
 
 ```
 app/
   main.py      web server, login, security headers, background scheduler
-  auth.py      password hashing, sessions, login rate limiting
+  auth.py      password hashing, sessions, known devices, login rate limiting
+  net.py       outbound requests without redirects
   setup.py     terminal fallback (password reset etc.)
   prefs.py     Settings-page preferences (validated)
   garmin_login.py  Garmin Connect sign-in incl. two-factor (web and terminal)

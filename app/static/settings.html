@@ -150,8 +150,17 @@
               <div class="row"><button type="button" class="btn" id="aiTest">Find models</button></div>
             </div>
             <div id="aiModelRow" hidden>
-              <label>Model <input name="ai_model" list="modelList" spellcheck="false" placeholder="Choose or type a model"></label>
-              <datalist id="modelList"></datalist>
+              <label for="aiModelSearch">Model</label>
+              <div class="combo" id="modelCombo">
+                <input id="aiModelSearch" role="combobox" aria-expanded="false" aria-controls="modelOptions" aria-autocomplete="list"
+                       autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="Search models">
+                <button type="button" class="combo-btn" id="modelToggle" aria-label="Show all models" tabindex="-1">
+                  <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+                <ul class="combo-list" id="modelOptions" role="listbox" aria-label="Models" hidden></ul>
+              </div>
+              <input type="hidden" name="ai_model">
+              <p class="note" id="modelNote"></p>
             </div>
             <div class="row"><button type="button" class="btn primary" id="aiSave" data-primary>Save</button></div>
             <p class="msg" id="aiMsg"></p>

@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.3.1
+
+- **Pick your AI model from a list.** Settings → AI coach now has a searchable dropdown filled with the models
+  your key (or Ollama server) can actually use, with friendly names, the recommended one marked, and sizes for
+  local models. It loads by itself once a key is saved. Typing still works for a model that isn't listed.
+
+Hardening for running behind a reverse proxy or Cloudflare Tunnel on a public address.
+See "Putting it on the internet" in the README.
+
+- **Login limits count real visitors.** New *Trusted proxy addresses* setting (`TRUSTED_PROXIES`). Requests from
+  that proxy are believed about who the visitor is, so one person's wrong passwords no longer lock out everyone.
+  IPv6 visitors are counted per /64.
+- **Strangers can't lock you out.** A browser that has signed in before is rate-limited on its own, apart from
+  the shared limit for unknown browsers.
+- **Secure cookies and HSTS are automatic** when you sign in over HTTPS; no setting to remember.
+- **The first account can't be created from outside** when a trusted proxy is configured.
+- **Request size limit** (128 kB), so oversized uploads are refused before being read.
+- **Guessable passwords are refused** when creating the account or changing the password.
+- Outbound requests (AI providers, Discord, weather) no longer follow redirects.
+- Changing your password or deleting data while signed in has its own attempt limit, so sign-in spam can't block it.
+- The first account is refused from any request that passed through a proxy or tunnel, even if
+  *Trusted proxy addresses* is missing or wrong. The log names the proxy address to add.
+- The Ollama address must be a plain server address (no path, no link-local range), and its error text
+  is no longer shown. The daily AI limit now holds under bursts of requests.
+
 ## v1.3.0
 
 - **Weather and heat-graded pace.** A new box beside the coach's note shows the weather for a city you pick

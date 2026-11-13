@@ -15,7 +15,7 @@ import urllib.request
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from . import ai, config, fitness, prefs as prefs_mod
+from . import ai, config, fitness, net, prefs as prefs_mod
 from .db import Database
 
 WEBHOOK_RE = re.compile(r"^https://(?:discord\.com|discordapp\.com|ptb\.discord\.com|canary\.discord\.com)"
@@ -52,7 +52,7 @@ def _post(url: str, payload: dict) -> None:
     req = urllib.request.Request(url, data=json.dumps(payload).encode(), method="POST",
                                  headers={"Content-Type": "application/json", "User-Agent": "garmin-dashboard"})
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with net.open_url(req, 15) as resp:
             resp.read(10000)
     except urllib.error.HTTPError as e:
         if e.code in (401, 403, 404):

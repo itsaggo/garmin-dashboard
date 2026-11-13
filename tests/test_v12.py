@@ -295,3 +295,24 @@ def test_ai_endpoints_need_session_and_header(mock_ai):
     for path in ("/api/insight/refresh", "/api/ai/key", "/api/ai/models"):
         assert anon.post(path, json={}, headers=JSON).status_code == 401
     assert anon.get("/api/overview").status_code == 401
+
+
+def test_model_choices_have_friendly_names(monkeypatch):
+    replies = {
+        "claude": {"data": [{"id": "claude-sonnet-5-5", "display_name": "Claude Sonnet 5.5", "created_at": "2026-05-01T00:00:00Z"},
+                            {"id": "claude-haiku-5-5", "display_name": "  Claude   Haiku 5.5 "}, {"id": "not-claude"}, {"id": 5}]},
+        "gemini": {"models": [{"name": "models/gemini-2.5-flash", "displayName": "Gemini 2.5 Flash", "supportedGenerationMethods": ["generateContent"]},
+                              {"name": "models/text-embedding-004", "supportedGenerationMethods": ["embedContent"]}]},
+        "openai": {"data": [{"id": "gpt-4.1-mini", "created": 2}, {"id": "gpt-5", "created": 9}, {"id": "whisper-1", "created": 5}]},
+        "ollama": {"models": [{"name": "llama3.1:8b", "size": 4_900_000_000, "details": {"parameter_size": "8.0B"}},
+                              {"name": "bad name <script>"}]},
+    }
+    monkeypatch.setattr(ai, "_request", lambda url, body, headers, timeout, direct=False:
+                        replies[next(k for h, k in (("anthropic", "claude"), ("googleapis", "gemini"),
+                                                     ("openai", "openai"), ("/api/tags", "ollama")) if h in url)])
+    c = ai.model_choices("claude", "k")
+    assert [x["label"] for x in c] == ["Claude Sonnet 5.5", "Claude Haiku 5.5"] and c[0]["note"] == "2026-05-01"
+    assert ai.model_choices("gemini", "k") == [{"id": "gemini-2.5-flash", "label": "Gemini 2.5 Flash", "note": ""}]
+    assert [x["id"] for x in ai.model_choices("openai", "k")] == ["gpt-5", "gpt-4.1-mini"]  # newest first
+    o = ai.model_choices("ollama", None, "http://ollama.local:11434")
+    assert o == [{"id": "llama3.1:8b", "label": "llama3.1:8b", "note": "8.0B · 4.9 GB"}]  # odd names dropped

@@ -60,7 +60,7 @@ async function loadState() {
   const nf = $("#notifyForm");
   if (nf) fillForm(nf, state.prefs, NOTIFY_FIELDS);
   const aiForm = $("#aiForm");
-  if (aiForm) { fillForm(aiForm, state.prefs, AI_FIELDS); showProvider(); }
+  if (aiForm) { fillForm(aiForm, state.prefs, AI_FIELDS); showProvider(); $("#aiModelSearch").value = state.prefs.ai_model || ""; }
   renderStatus();
 }
 
@@ -220,11 +220,129 @@ function wirePlaceSearch(form) {
 
 function provider() { const f = $("#aiForm"); return f ? f.elements.ai_provider.value || "none" : "none"; }
 
-function fillModels(models, suggested) {
-  const list = $("#modelList");
-  list.replaceChildren(...models.map((m) => { const o = document.createElement("option"); o.value = m; return o; }));
-  const input = $("#aiForm").elements.ai_model;
-  if (suggested && (!input.value || !models.includes(input.value))) input.value = suggested;
+/* ---------------------------------------------------------------- model picker
+   A searchable dropdown filled with the models your key (or Ollama server) can actually use. */
+const MODEL_ID_RE = /^[A-Za-z0-9._:\/-]{1,120}$/;
+const picker = { choices: [], suggested: null, shown: [], active: -1, provider: null };
+const modelCache = {};
+
+function chosenModel() { return $("#aiForm").elements.ai_model.value; }
+function labelFor(id) { const c = picker.choices.find((x) => x.id === id); return c ? c.label : id; }
+
+function setModel(id) {
+  $("#aiForm").elements.ai_model.value = id || "";
+  $("#aiModelSearch").value = id ? labelFor(id) : "";
+  const c = picker.choices.find((x) => x.id === id);
+  const note = $("#modelNote");
+  if (!id) note.textContent = "";
+  else if (!c && picker.choices.length) note.textContent = `${id} isn't in the list for this key, but it will be tried as typed.`;
+  else note.textContent = [c && c.label !== id ? id : "", c && c.note, id === picker.suggested ? "Recommended for the coach" : ""].filter(Boolean).join(" · ");
+}
+
+function fillModels(choices, suggested) {
+  picker.choices = (choices || []).filter((c) => c && c.id);
+  picker.suggested = suggested || null;
+  const search = $("#aiModelSearch");
+  search.disabled = !picker.choices.length;
+  search.placeholder = picker.choices.length ? `Search ${picker.choices.length} models` : "No models found";
+  const cur = chosenModel();
+  setModel(suggested && (!cur || !picker.choices.some((c) => c.id === cur)) ? suggested : cur);
+}
+
+function emptyPicker(text) {
+  picker.choices = []; picker.suggested = null;
+  const search = $("#aiModelSearch");
+  search.disabled = true; search.placeholder = text;
+  search.value = chosenModel() || "";
+  $("#modelNote").textContent = "";
+  closeOptions();
+}
+
+function renderOptions(query) {
+  const list = $("#modelOptions");
+  const words = String(query || "").toLowerCase().split(/\s+/).filter(Boolean);
+  const ordered = [...picker.choices].sort((a, b) => (b.id === picker.suggested) - (a.id === picker.suggested));
+  picker.shown = ordered.filter((c) => words.every((w) => (c.id + " " + c.label).toLowerCase().includes(w)));
+  const typed = String(query || "").trim();
+  if (typed && MODEL_ID_RE.test(typed) && !picker.choices.some((c) => c.id === typed) && !picker.shown.length) {
+    picker.shown = [{ id: typed, label: `Use "${typed}"`, note: "not in your list", custom: true }];
+  }
+  list.replaceChildren(...picker.shown.map((c, i) => {
+    const li = document.createElement("li");
+    li.id = `modelOpt${i}`; li.setAttribute("role", "option");
+    li.setAttribute("aria-selected", String(c.id === chosenModel()));
+    const top = document.createElement("span"); top.className = "opt-l"; top.textContent = c.label;
+    if (c.id === picker.suggested) { const b = document.createElement("span"); b.className = "opt-tag"; b.textContent = "Recommended"; top.append(b); }
+    li.append(top);
+    const sub = [c.label !== c.id && !c.custom ? c.id : "", c.note].filter(Boolean).join(" · ");
+    if (sub) { const d = document.createElement("span"); d.className = "opt-d"; d.textContent = sub; li.append(d); }
+    li.addEventListener("mousedown", (e) => e.preventDefault());  // keep focus in the search box
+    li.addEventListener("click", () => pick(i));
+    return li;
+  }));
+  if (!picker.shown.length) {
+    const li = document.createElement("li"); li.className = "opt-empty"; li.textContent = "No models match";
+    list.append(li);
+  }
+  picker.active = picker.shown.findIndex((c) => c.id === chosenModel());
+  if (picker.active < 0 && picker.shown.length && words.length) picker.active = 0;
+  markActive();
+}
+
+function markActive() {
+  const items = $$("#modelOptions [role=option]");
+  items.forEach((li, i) => li.classList.toggle("on", i === picker.active));
+  const search = $("#aiModelSearch");
+  if (picker.active >= 0 && items[picker.active]) {
+    search.setAttribute("aria-activedescendant", items[picker.active].id);
+    items[picker.active].scrollIntoView({ block: "nearest" });
+  } else search.removeAttribute("aria-activedescendant");
+}
+
+function openOptions(query) {
+  if (!picker.choices.length) return;
+  renderOptions(query);
+  $("#modelOptions").hidden = false;
+  $("#aiModelSearch").setAttribute("aria-expanded", "true");
+}
+function closeOptions() {
+  const list = $("#modelOptions");
+  if (list) list.hidden = true;
+  const search = $("#aiModelSearch");
+  if (search) { search.setAttribute("aria-expanded", "false"); search.removeAttribute("aria-activedescendant"); }
+}
+function pick(i) {
+  const c = picker.shown[i];
+  if (!c) return;
+  setModel(c.id);
+  closeOptions();
+  say($("#aiMsg"), "Press Save to use this model.");
+}
+
+function wireModelPicker() {
+  const search = $("#aiModelSearch");
+  if (!search) return;
+  search.addEventListener("focus", () => { search.select(); openOptions(""); });
+  search.addEventListener("input", () => openOptions(search.value));
+  search.addEventListener("keydown", (e) => {
+    const open = !$("#modelOptions").hidden;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!open) return openOptions("");
+      const n = picker.shown.length;
+      if (n) { picker.active = (picker.active + (e.key === "ArrowDown" ? 1 : -1) + n) % n; markActive(); }
+    } else if (e.key === "Enter") {
+      e.preventDefault(); e.stopPropagation();  // pick a model, don't submit the form
+      if (open && picker.active >= 0) pick(picker.active);
+    } else if (e.key === "Escape" && open) {
+      e.preventDefault(); closeOptions(); setModel(chosenModel());
+    }
+  });
+  search.addEventListener("blur", () => { closeOptions(); setModel(chosenModel()); });
+  $("#modelToggle").addEventListener("mousedown", (e) => e.preventDefault());
+  $("#modelToggle").addEventListener("click", () => {
+    if ($("#modelOptions").hidden) { search.focus(); openOptions(""); } else closeOptions();
+  });
 }
 
 function showProvider() {
@@ -249,24 +367,35 @@ function showProvider() {
 async function loadModels(p) {
   const body = { provider: p };
   if (p === "ollama") body.url = $("#aiForm").elements.ollama_url.value.trim();
+  const search = $("#aiModelSearch");
+  search.disabled = true; search.placeholder = "Loading models…";
   const res = await api("/api/ai/models", { method: "POST", body });
-  fillModels(res.models, res.suggested);
+  modelCache[p] = res;
+  if (provider() === p) fillModels(res.choices, res.suggested);
   return res.models;
+}
+
+/* Fill the model list for the chosen provider: from memory, from the server, or explain what's needed. */
+async function refreshModels() {
+  const p = provider();
+  if (p === "none") return;
+  if (modelCache[p]) return fillModels(modelCache[p].choices, modelCache[p].suggested);
+  const keyed = (state.ai_providers[p] || {}).keyed;
+  if (keyed && !(state.ai_keys_saved && state.ai_keys_saved[p])) return emptyPicker("Save your API key to see models");
+  if (p === "ollama" && !$("#aiForm").elements.ollama_url.value.trim()) return emptyPicker("Enter the Ollama address, then Find models");
+  try { await loadModels(p); }
+  catch (e) { emptyPicker("Couldn't load models"); say($("#aiMsg"), e.message, "err"); }
 }
 
 function wireAi() {
   const form = $("#aiForm");
   if (!form) return;
   const msg = $("#aiMsg");
+  wireModelPicker();
   for (const r of form.querySelectorAll("input[name=ai_provider]")) {
-    r.addEventListener("change", async () => {
-      showProvider(); say(msg, "");
-      const p = provider();
-      if (state.ai_keys_saved && state.ai_keys_saved[p]) {
-        try { await loadModels(p); } catch (e) { say(msg, e.message, "err"); }
-      }
-    });
+    r.addEventListener("change", () => { showProvider(); say(msg, ""); refreshModels(); });
   }
+  if (provider() !== "none") refreshModels();  // ready before you open the list
   $("#aiKeySave").addEventListener("click", () => busy($("#aiKeySave"), async () => {
     const key = $("#aiKey").value.trim();
     if (!key) return say(msg, "Paste your API key first.", "err");
@@ -275,8 +404,9 @@ function wireAi() {
       const res = await api("/api/ai/key", { method: "POST", body: { provider: provider(), key } });
       $("#aiKey").value = "";
       state.ai_keys_saved[provider()] = true; showProvider();
-      fillModels(res.models, res.suggested);
-      say(msg, `Key saved. ${res.models.length} models available. Pick one and press Save.`, "ok");
+      modelCache[provider()] = res;
+      fillModels(res.choices, res.suggested);
+      say(msg, `Key saved. ${res.models.length} models available${res.suggested ? `, ${labelFor(res.suggested)} picked for you` : ""}. Press Save to use it.`, "ok");
     } catch (e) { say(msg, e.message, "err"); }
   }));
   $("#aiKeyRemove").addEventListener("click", () => busy($("#aiKeyRemove"), async () => {
@@ -284,9 +414,11 @@ function wireAi() {
     try {
       await api("/api/ai/key/remove", { method: "POST", body: { provider: provider() } });
       state.ai_keys_saved[provider()] = false; showProvider();
+      delete modelCache[provider()]; emptyPicker("Save your API key to see models");
       say(msg, "Key removed.", "ok");
     } catch (e) { say(msg, e.message, "err"); }
   }));
+  form.elements.ollama_url.addEventListener("change", () => { delete modelCache.ollama; });
   $("#aiTest").addEventListener("click", () => busy($("#aiTest"), async () => {
     say(msg, "Contacting Ollama…");
     try {
@@ -296,7 +428,7 @@ function wireAi() {
   }));
   $("#aiSave").addEventListener("click", () => busy($("#aiSave"), async () => {
     const p = provider();
-    if (p !== "none" && !form.elements.ai_model.value.trim()) return say(msg, "Choose a model first.", "err");
+    if (p !== "none" && !form.elements.ai_model.value.trim()) return say(msg, "Choose a model from the list first.", "err");
     if (await savePrefs(form, AI_FIELDS, msg) && p !== "none") say(msg, "Saved. Your coach writes its first insight within a minute or two.", "ok");
   }));
 }

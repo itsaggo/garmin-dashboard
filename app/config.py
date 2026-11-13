@@ -7,6 +7,7 @@ DATA_DIR/secrets (directory 0700, files 0600) and are written by
 """
 from __future__ import annotations
 
+import ipaddress
 import os
 import sys
 from dataclasses import dataclass
@@ -50,6 +51,7 @@ class Settings:
     request_delay: float
     allowed_hosts: frozenset
     allowed_origins: frozenset
+    trusted_proxies: tuple = ()
 
     # ---- paths ---------------------------------------------------------
     @property
@@ -167,9 +169,25 @@ def load() -> Settings:
         allowed_origins=frozenset(
             o.strip().lower().rstrip("/") for o in _env("ALLOWED_ORIGINS").split(",") if o.strip()
         ),
+        trusted_proxies=_networks(_env("TRUSTED_PROXIES")),
     )
     ensure_private_dir(settings.secrets_dir)
     return settings
+
+
+def _networks(value: str) -> tuple:
+    """TRUSTED_PROXIES: addresses or ranges (10.0.0.5, 172.18.0.0/16) of the reverse proxy or tunnel
+    in front of the dashboard. Only requests arriving from these may say who the real visitor is."""
+    out = []
+    for part in value.replace(";", ",").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            out.append(ipaddress.ip_network(part, strict=False))
+        except ValueError:
+            print(f"WARNING: ignoring TRUSTED_PROXIES entry that isn't an address or range: {part[:60]!r}", file=sys.stderr)
+    return tuple(out)
 
 
 def _valid_date(value: str) -> str | None:

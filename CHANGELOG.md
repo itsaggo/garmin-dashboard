@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.4.1
+
+- **Local AI (Ollama) no longer gives up with "The model returned an empty answer".** "Thinking" models such as
+  Qwen 3, gpt-oss, DeepSeek-R1 and Gemma 4 often reply with nothing when the coach asks for its insight in JSON. The
+  coach now asks once more in plain text, and if the model wrote the insight inside its thinking, uses that.
+- The coach now gives a local model enough room for all of your data plus its thinking (16k tokens), so nothing is cut off.
+- If a local model still returns nothing, the message says why and what to switch to.
+
 ## v1.4.0
 
 - **Race recap.** A new **Recap** tab turns a run into a 14-second arcade-style 3D video for Instagram.

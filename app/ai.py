@@ -231,18 +231,47 @@ def _chat(provider: str, key: str | None, model: str, ollama_url: str | None, sy
         parts = (((data.get("candidates") or [{}])[0].get("content") or {}).get("parts") or [])
         text = "".join(p.get("text", "") for p in parts if isinstance(p, dict))
     elif provider == "ollama":
-        body = {"model": model, "stream": False, "options": {"temperature": 0.4},
-                "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}]}
-        if want_json:
-            body["format"] = "json"
-        data = _request(f"{ollama_url}/api/chat", body, {}, max(timeout, 180), direct=True)
-        text = (data.get("message") or {}).get("content") or ""
+        text = _ollama_chat(ollama_url, model, system, prompt, want_json, max(timeout, 180))
     else:
         raise AIError("Unknown provider.")
     text = text.strip()
     if not text:
         raise AIError("The model returned an empty answer.")
     return text[:6000]
+
+
+OLLAMA_CTX = 16384  # the facts run to ~5k tokens and thinking models (Qwen 3.5…) think for thousands more;
+                   # Ollama's default window can be smaller and cut them off
+
+
+def _ollama_chat(url: str | None, model: str, system: str, prompt: str, want_json: bool, timeout: float) -> str:
+    """Local models via Ollama. "Thinking" models (Qwen 3, gpt-oss, DeepSeek-R1, Gemma 4…) often return an empty
+    answer when a JSON reply is forced, or put the answer inside their thinking: ask again in plain text, and as a
+    last resort take an insight the model wrote inside its thinking."""
+    def once(force_json: bool) -> tuple[str, str]:
+        body: dict[str, Any] = {"model": model, "stream": False, "options": {"temperature": 0.4, "num_ctx": OLLAMA_CTX},
+                                "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}]}
+        if force_json:
+            body["format"] = "json"
+        data = _request(f"{url}/api/chat", body, {}, timeout, direct=True)
+        msg = data.get("message") if isinstance(data.get("message"), dict) else {}
+        content, thinking = msg.get("content"), msg.get("thinking")
+        return (content.strip() if isinstance(content, str) else "",
+                thinking.strip() if isinstance(thinking, str) else "")
+
+    content, thinking = once(want_json)
+    if not content and want_json:
+        content, thinking = once(False)
+    if not content and want_json and thinking:
+        found = _parse_insight(thinking)
+        if found["headline"] and found["today"]:
+            return json.dumps(found)
+    if not content:
+        why = "only its thinking and no answer" if thinking else "an empty answer"
+        raise AIError(f"The local model ({model}) returned {why}. Thinking models such as Qwen 3, gpt-oss or "
+                      "DeepSeek-R1 sometimes do this: pick a non-thinking model like llama3.1:8b in Settings, "
+                      "or update Ollama.")
+    return content
 
 
 def _parse_insight(text: str) -> dict:

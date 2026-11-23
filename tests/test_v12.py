@@ -169,6 +169,7 @@ def test_facts_have_no_personal_identifiers(signed_in):
 class _Mock(BaseHTTPRequestHandler):
     seen: list = []
     reply = "{}"
+    ollama = None
 
     def log_message(self, *a):
         pass
@@ -212,6 +213,8 @@ class _Mock(BaseHTTPRequestHandler):
         if ":generateContent" in self.path:
             return self._send(200, {"candidates": [{"content": {"parts": [{"text": text}]}}]})
         if self.path == "/api/chat":
+            if _Mock.ollama:  # simulate a particular local model's reply
+                return self._send(200, {"message": _Mock.ollama(body)})
             return self._send(200, {"message": {"content": text}})
         self._send(404, {})
 
@@ -224,6 +227,7 @@ def mock_ai(monkeypatch):
     for p in ("claude", "gemini", "openai"):
         monkeypatch.setitem(ai.PROVIDERS[p], "base", base)
     _Mock.seen = []
+    _Mock.ollama = None
     _Mock.reply = json.dumps({"headline": "Easy day, you've earned it", "today": "Run 3 easy miles.",
                               "insights": ["HRV is steady.", "Sleep improved."], "focus": "Keep easy runs easy."})
     yield base
@@ -261,6 +265,48 @@ def test_ollama_provider_and_non_json_reply(signed_in, mock_ai):
     _Mock.reply = "Just run easy today."  # model ignored the JSON instruction
     ins = signed_in.post("/api/insight/refresh", headers=JSON).json()["insight"]
     assert ins["today"] == "Just run easy today." and ins["headline"] == ""
+
+
+def _use_ollama(c, url, model="qwen3:8b"):
+    c.post("/api/settings", json={"values": {"ai_provider": "ollama", "ollama_url": url, "ai_model": model}}, headers=JSON)
+
+
+def test_ollama_gets_room_for_the_facts(signed_in, mock_ai):
+    _use_ollama(signed_in, mock_ai, "llama3.1:8b")
+    signed_in.post("/api/insight/refresh", headers=JSON)
+    body = _Mock.seen[-1][2]
+    assert body["options"]["num_ctx"] == ai.OLLAMA_CTX and body["format"] == "json" and "think" not in body
+
+
+def test_thinking_model_empty_json_answer_is_asked_again(signed_in, mock_ai):
+    # empty answer when JSON is forced (a known Ollama quirk with thinking models), fine in plain text
+    good = json.dumps({"headline": "Recovery week", "today": "Rest today.", "insights": ["HRV dipped."], "focus": "Sleep."})
+    _Mock.ollama = lambda body: ({"content": "", "thinking": "Let me think about the data..."} if body.get("format")
+                                 else {"content": "Here you go:\n" + good, "thinking": "..."})
+    _use_ollama(signed_in, mock_ai)
+    r = signed_in.post("/api/insight/refresh", headers=JSON)
+    assert r.status_code == 200 and r.json()["insight"]["headline"] == "Recovery week"
+    sent = [b for path, _, b in _Mock.seen if path == "/api/chat"]
+    assert [("format" in b) for b in sent[-2:]] == [True, False]
+
+
+def test_thinking_model_answer_only_in_its_thinking(signed_in, mock_ai):
+    inside = 'Okay. {"headline": "Easy does it", "today": "Run 30 minutes easy.", "insights": [], "focus": "Easy."}'
+    _Mock.ollama = lambda body: {"content": "", "thinking": inside}
+    _use_ollama(signed_in, mock_ai)
+    ins = signed_in.post("/api/insight/refresh", headers=JSON).json()["insight"]
+    assert ins["headline"] == "Easy does it" and ins["today"] == "Run 30 minutes easy."
+
+
+def test_empty_local_answer_explains_what_to_do(signed_in, mock_ai):
+    _Mock.ollama = lambda body: {"content": "  ", "thinking": "Hmm, the user wants..."}   # thinking but no answer
+    _use_ollama(signed_in, mock_ai)
+    r = signed_in.post("/api/insight/refresh", headers=JSON)
+    assert r.status_code in (400, 502) and "only its thinking" in r.json()["detail"] and "llama3.1:8b" in r.json()["detail"]
+    _Mock.ollama = lambda body: {"content": ""}
+    r = signed_in.post("/api/insight/ask", json={"question": "Can I run tomorrow?"}, headers=JSON)
+    assert "empty answer" in r.json()["detail"] and "qwen3:8b" in r.json()["detail"]
+    assert len([p for p, _, b in _Mock.seen if p == "/api/chat" and "Can I run" in json.dumps(b)]) == 1  # no retry for plain text
 
 
 def test_daily_caps(signed_in, mock_ai, monkeypatch):

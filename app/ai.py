@@ -14,7 +14,7 @@ import urllib.request
 from datetime import date, datetime
 from typing import Any
 
-from . import config, fitness, net, prefs as prefs_mod
+from . import config, fitness, net, plan as plan_mod, prefs as prefs_mod
 from .db import Database
 
 PROVIDERS: dict[str, dict[str, Any]] = {
@@ -50,6 +50,10 @@ INSIGHT_ASK = (
 
 class AIError(Exception):
     pass
+
+
+def _system(has_plan: bool) -> str:
+    return SYSTEM + (" " + plan_mod.RULES if has_plan else "")
 
 
 # ------------------------------------------------------------------ keys
@@ -284,12 +288,13 @@ def _parse_insight(text: str) -> dict:
                     return str(v).strip()[:n] if v else ""
                 insights = obj.get("insights") if isinstance(obj.get("insights"), list) else []
                 out = {"headline": clean(obj.get("headline"), 160), "today": clean(obj.get("today"), 600),
-                       "insights": [clean(i, 300) for i in insights[:4] if i], "focus": clean(obj.get("focus"), 300)}
+                       "insights": [clean(i, 300) for i in insights[:4] if i], "focus": clean(obj.get("focus"), 300),
+                       "plan_change": obj.get("plan_change")}  # checked by plan.clean_change before it's kept
                 if out["headline"] or out["today"]:
                     return out
         except ValueError:
             pass
-    return {"headline": "", "today": text[:1200], "insights": [], "focus": ""}
+    return {"headline": "", "today": text[:1200], "insights": [], "focus": "", "plan_change": None}
 
 
 # ------------------------------------------------------------------ usage caps
@@ -343,9 +348,14 @@ def generate_insight(s: config.Settings, db: Database, reason: str = "manual") -
         if reason == "manual":
             _spend(db, "refresh")
         facts = fitness.facts(db)
-        prompt = "Facts (JSON):\n" + json.dumps(facts, default=str)[:14000] + "\n\n" + INSIGHT_ASK
-        text = _chat(provider, key, p["ai_model"], p.get("ollama_url"), SYSTEM, prompt, want_json=True)
-        insight = {**_parse_insight(text), "date": date.today().isoformat(),
+        has_plan = "training_plan" in facts
+        ask_for = INSIGHT_ASK.replace('"focus": "one focus for this week, 1 sentence"}',
+                                      '"focus": "one focus for this week, 1 sentence", ' + plan_mod.INSIGHT_FIELD + "}") if has_plan else INSIGHT_ASK
+        prompt = "Facts (JSON):\n" + json.dumps(facts, default=str)[:14000] + "\n\n" + ask_for
+        text = _chat(provider, key, p["ai_model"], p.get("ollama_url"), _system(has_plan), prompt, want_json=True)
+        parsed = _parse_insight(text)
+        parsed["plan_change"] = plan_mod.clean_change(parsed.get("plan_change"), db) if has_plan else None
+        insight = {**parsed, "date": date.today().isoformat(),
                    "generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
                    "provider": provider, "provider_label": PROVIDERS[provider]["label"], "model": p["ai_model"]}
         db.set_meta("insight", json.dumps(insight))
@@ -363,7 +373,7 @@ def ask(s: config.Settings, db: Database, question: str) -> dict:
     facts = fitness.facts(db)
     prompt = ("Facts (JSON):\n" + json.dumps(facts, default=str)[:14000] +
               f"\n\nThe athlete asks: {question}\n\nAnswer in plain text (no markdown headings), under 150 words.")
-    text = _chat(provider, key, p["ai_model"], p.get("ollama_url"), SYSTEM, prompt, want_json=False)
+    text = _chat(provider, key, p["ai_model"], p.get("ollama_url"), _system("training_plan" in facts), prompt, want_json=False)
     return {"answer": text, "model": p["ai_model"], "provider_label": PROVIDERS[provider]["label"]}
 
 

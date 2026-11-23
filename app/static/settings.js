@@ -481,6 +481,72 @@ function wireNotify() {
   $("#notifySave").addEventListener("click", () => busy($("#notifySave"), () => savePrefs($("#notifyForm"), NOTIFY_FIELDS, $("#notifyMsg"))));
 }
 
+/* ---------------------------------------------------------------- training plan */
+const PLAN_STATUS = { done: "Done", partial: "Partly done", missed: "Missed", rested: "Rested", extra: "Extra run", today: "Today", upcoming: "", none: "" };
+const KIND_LABEL = { rest: "Rest", easy: "Easy", long: "Long", tempo: "Tempo", intervals: "Intervals", race: "Race", cross: "Cross", run: "Run", other: "Other" };
+
+function planTable(days, withStatus) {
+  const host = $("#planTable");
+  host.textContent = "";
+  if (!days.length) return;
+  const tbl = document.createElement("table");
+  const head = tbl.createTHead().insertRow();
+  for (const h of ["Date", "Session", "Type", ...(withStatus ? ["Status"] : [])]) { const th = document.createElement("th"); th.textContent = h; head.append(th); }
+  const tb = tbl.createTBody();
+  for (const d of days) {
+    const e = withStatus ? d.planned : d;
+    if (withStatus && !e && d.status !== "extra") continue;
+    const tr = tb.insertRow();
+    const day = new Date(d.date + "T12:00:00");
+    tr.insertCell().textContent = day.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+    tr.insertCell().textContent = e ? e.text : "(not planned)";
+    tr.insertCell().textContent = e ? KIND_LABEL[e.kind] || e.kind : "";
+    if (withStatus) { const c = tr.insertCell(); c.textContent = PLAN_STATUS[d.status] || ""; c.className = "ps-" + d.status; }
+  }
+  host.append(tbl);
+}
+
+async function loadPlan() {
+  const r = await api("/api/plan");
+  const i = r.info;
+  const fmtD = (iso) => new Date(iso + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  $("#planInfo").textContent = i.days ? `Saved plan: ${i.days} days, ${fmtD(i.first)} to ${fmtD(i.last)}. Edit the text below and save to replace it.`
+    : "No plan saved yet.";
+  $("#planText").value = r.text;
+  $("#planClear").hidden = !i.days;
+  planTable(r.days, true);
+}
+
+function wirePlan() {
+  const text = $("#planText");
+  if (!text) return;
+  const body = () => ({ text: text.value, week1: $("#planWeek1").value || null });
+  const msg = $("#planMsg");
+  $("#planPreview").addEventListener("click", () => busy($("#planPreview"), async () => {
+    try {
+      const r = await api("/api/plan/preview", { method: "POST", body: body() });
+      planTable(r.days, false);
+      const notes = [`Found ${r.days.length} day${r.days.length === 1 ? "" : "s"}.`];
+      if (r.needs_week1) notes.push("Some weeks have no dates: enter when week 1 starts.");
+      if (r.skipped_count) notes.push(`${r.skipped_count} line${r.skipped_count === 1 ? " wasn't" : "s weren't"} understood, e.g. "${r.skipped[0]}".`);
+      say(msg, notes.join(" "), r.days.length && !r.needs_week1 ? "ok" : "err");
+    } catch (e) { say(msg, e.message, "err"); }
+  }));
+  $("#planSave").addEventListener("click", () => busy($("#planSave"), async () => {
+    try {
+      const r = await api("/api/plan", { method: "POST", body: body() });
+      await loadPlan();
+      say(msg, `Plan saved: ${r.saved} days. Your coach uses it from its next insight (or press Rewrite on the dashboard).`, "ok");
+    } catch (e) { say(msg, e.message, "err"); }
+  }));
+  $("#planClear").addEventListener("click", () => busy($("#planClear"), async () => {
+    if (!confirm("Remove your training plan? Your activities aren't affected.")) return;
+    try { await api("/api/plan/clear", { method: "POST" }); await loadPlan(); say(msg, "Plan removed.", "ok"); }
+    catch (e) { say(msg, e.message, "err"); }
+  }));
+  loadPlan().catch((e) => say(msg, e.message, "err"));
+}
+
 /* ---------------------------------------------------------------- panels */
 function wirePanels() {
   const links = $$(".side-nav a");
@@ -585,5 +651,5 @@ function wireWizard() {
     });
   }
   try { await loadState(); } catch (e) { say($("#pageMsg"), "Couldn't load settings: " + e.message, "err"); return; }
-  wirePanels(); wireApiKey(); wireConnect(); wirePrefs(); wireAi(); wireCustomize(); wireNotify(); wireAccount(); wireData(); wireWizard();
+  wirePanels(); wireApiKey(); wireConnect(); wirePrefs(); wireAi(); wirePlan(); wireCustomize(); wireNotify(); wireAccount(); wireData(); wireWizard();
 })();

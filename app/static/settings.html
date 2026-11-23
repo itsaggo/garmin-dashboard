@@ -27,6 +27,7 @@
       <a href="#general" data-panel="general">General</a>
       <a href="#garmin" data-panel="garmin">Garmin</a>
       <a href="#ai" data-panel="ai">AI coach</a>
+      <a href="#plan" data-panel="plan">Training plan</a>
       <a href="#customize" data-panel="customize">Customize</a>
       <a href="#notifications" data-panel="notifications">Notifications</a>
       <a href="#account" data-panel="account">Account</a>
@@ -165,6 +166,30 @@
             <div class="row"><button type="button" class="btn primary" id="aiSave" data-primary>Save</button></div>
             <p class="msg" id="aiMsg"></p>
           </form>
+        </div>
+      </section>
+
+      <!-- Training plan -->
+      <section class="panel" data-panel="plan" hidden>
+        <div class="card">
+          <h2>Training plan</h2>
+          <p class="note">Paste the plan you're following, one session per date: from a coach, a book or a chat. Your coach builds
+            each day's advice on it, and your synced runs tick days off automatically. Lines that start with a date work, and
+            so do tables with a Date column, tables with a row per week and a column per weekday, and "Week 1" headings
+            followed by "Mon: …" lines.</p>
+          <p class="note" id="planInfo"></p>
+          <label for="planText">Your plan</label>
+          <textarea id="planText" rows="14" spellcheck="false" maxlength="60000"
+                    placeholder="Nov 24  Easy 4 mi&#10;Nov 25  Tempo 5 mi&#10;Nov 26  Rest&#10;Nov 27  Easy 4 mi&#10;…"></textarea>
+          <label for="planWeek1">Week 1 starts on <span class="note-inline">only for plans written by week without dates</span></label>
+          <input type="date" id="planWeek1">
+          <div class="row">
+            <button type="button" class="btn" id="planPreview">Preview</button>
+            <button type="button" class="btn primary" id="planSave" data-primary>Save plan</button>
+            <button type="button" class="btn danger" id="planClear">Remove plan</button>
+          </div>
+          <p class="msg" id="planMsg"></p>
+          <div class="plan-table" id="planTable"></div>
         </div>
       </section>
 

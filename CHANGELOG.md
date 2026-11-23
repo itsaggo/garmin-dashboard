@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.5.0
+
+- **Training plan.** Paste your plan in the new **Settings → Training plan** and the dashboard follows it.
+  - Reads dated lines, tables with a Date column, week-by-weekday tables and "Week 1 / Mon: …" layouts. Preview
+    shows what was understood before you save.
+  - Your synced runs tick days off automatically: done, partly done, missed, rested or extra run.
+  - The AI coach builds each day's advice on today's planned session. When your recovery data calls for it, it can
+    suggest moving or adjusting sessions in the coming week without hurting the training cycle; you choose
+    **Apply** or **Dismiss**, and **Undo** reverts an applied change.
+  - A **This week** strip on the dashboard, today's session above the coach's note and at the top of the Discord
+    morning message.
+  - Included in **Download my data**; removed by **Delete everything** (not by deleting stored Garmin data).
+
 ## v1.4.1
 
 - **Local AI (Ollama) no longer gives up with "The model returned an empty answer".** "Thinking" models such as

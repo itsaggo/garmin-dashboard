@@ -8,6 +8,7 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
+from typing import Literal
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -18,7 +19,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import ai, auth, config, fitness, garmin_login, notify, prefs, recap, sync, weather
+from . import ai, auth, config, fitness, garmin_login, notify, plan, prefs, recap, sync, weather
 from .db import Database
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -761,6 +762,7 @@ def export_data():
         "daily": db.rows_since("daily", "0000-01-01"),
         "training": db.rows_since("training", "0000-01-01"),
         "activities": db.activities(1_000_000),
+        "training_plan": plan.entries(db),
     }
     name = f"garmin-dashboard-export-{date.today().isoformat()}.json"
     return Response(json.dumps(payload, indent=1, default=str), media_type="application/json",
@@ -885,6 +887,76 @@ def ai_models(body: AiModelsIn):
         raise HTTPException(502, str(e)) from e
     models = [c["id"] for c in choices]
     return {"models": models, "choices": choices, "suggested": ai.suggest_model(body.provider, models)}
+
+
+# ------------------------------------------------------------------ training plan
+class PlanIn(BaseModel):
+    text: str = Field(max_length=plan.MAX_TEXT)
+    week1: date | None = None
+
+
+class PlanChangeIn(BaseModel):
+    action: Literal["apply", "dismiss", "undo"]
+
+
+def _read_plan(body: PlanIn) -> dict:
+    try:
+        return plan.parse(body.text, body.week1)
+    except plan.PlanError as e:
+        raise HTTPException(400, str(e)) from None
+
+
+@app.get("/api/plan")
+def plan_get():
+    """The whole plan, each day checked against your activities."""
+    i = plan.info(db)
+    days = plan.days_with_status(db, date.fromisoformat(i["first"]), date.fromisoformat(i["last"])) if i["days"] else []
+    return {"info": i, "text": plan.as_text(db), "days": days, "can_undo": bool(db.get_meta("plan_undo"))}
+
+
+@app.get("/api/plan/week")
+def plan_week():
+    return {**plan.week(db), "can_undo": bool(db.get_meta("plan_undo"))}
+
+
+@app.post("/api/plan/preview")
+def plan_preview(body: PlanIn):
+    return _read_plan(body)
+
+
+@app.post("/api/plan")
+def plan_save(body: PlanIn):
+    r = _read_plan(body)
+    if not r["days"]:
+        raise HTTPException(400, "No dated sessions found. Each line needs a date (or use Week 1 starts on).")
+    return {"saved": plan.save(db, r["days"]), "info": plan.info(db)}
+
+
+@app.post("/api/plan/clear")
+def plan_clear():
+    plan.clear(db)
+    return {"ok": True}
+
+
+@app.post("/api/plan/change")
+def plan_change(body: PlanChangeIn):
+    """Apply, dismiss or undo the change your coach suggested today. Only the stored suggestion is used."""
+    ins = ai.stored_insight(db) or {}
+    ch = ins.get("plan_change") if isinstance(ins.get("plan_change"), dict) else None
+    if body.action == "undo":
+        if not plan.undo_last(db):
+            raise HTTPException(400, "There's nothing to undo.")
+        if ch and ch.get("state") == "applied":
+            ch["state"] = "pending"
+    else:
+        if not ch or ch.get("state") != "pending" or ins.get("date") != date.today().isoformat():
+            raise HTTPException(400, "There's no suggested change waiting for today.")
+        if body.action == "apply":
+            plan.apply_change(db, ch)
+        ch["state"] = "applied" if body.action == "apply" else "dismissed"
+    if ch:
+        db.set_meta("insight", json.dumps(ins))
+    return {"insight": ins, "week": {**plan.week(db), "can_undo": bool(db.get_meta("plan_undo"))}}
 
 
 # ------------------------------------------------------------------ race recap

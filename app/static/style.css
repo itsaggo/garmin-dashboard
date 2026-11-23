@@ -442,3 +442,51 @@ main.recap-wrap { max-width: 1240px; }
   .rc-opt .seg button small { display: none; }
   .rc-head h1 { font-size: 24px; }
 }
+
+/* ================================================================ training plan */
+.coach-plan { margin: 0 0 14px; padding: 8px 12px; background: var(--surface-2); border-left: 3px solid var(--accent); font-size: 14.5px; line-height: 1.45; }
+.coach-plan span { font-size: 11.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-right: 10px; }
+.coach-change { margin: 18px 0 0; padding: 12px 14px; border: 1px solid var(--axis); border-radius: 10px; display: grid; gap: 8px; font-size: 14px; }
+.coach-change p { margin: 0; color: var(--ink-2); line-height: 1.5; }
+.coach-change ul { margin: 0; padding-left: 18px; display: grid; gap: 3px; }
+.coach-change s { color: var(--muted); }
+.coach-change .row { display: flex; gap: 8px; }
+.coach-change.done { border-style: dashed; }
+.coach-change .link-btn { justify-self: start; }
+.plan-wk { display: grid; gap: 10px; height: 100%; align-content: start; }
+.plan-wk .eyebrow { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
+.plan-edit { margin-left: auto; font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--accent); }
+.pd-row { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); border-top: 1px solid var(--rule); }
+.pd { padding: 8px 8px 6px; border-right: 1px solid var(--grid); display: grid; gap: 4px; align-content: start; min-width: 0; }
+.pd:last-child { border-right: 0; }
+.pd-today { background: var(--surface-2); box-shadow: inset 0 3px 0 var(--accent); }
+.pd-day { font-size: 11.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.pd-day span { color: var(--ink); }
+.pd-s { font-size: 13px; line-height: 1.35; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.pk-rest .pd-s { color: var(--muted); }
+.pk-long .pd-s, .pk-tempo .pd-s, .pk-intervals .pd-s, .pk-race .pd-s { font-weight: 600; }
+.pd-none { color: var(--muted); }
+.pd-st { font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; }
+.pd-mark { width: 8px; height: 8px; border-radius: 50%; background: var(--c-faint); flex: none; }
+.pd-done .pd-mark, .pd-rested .pd-mark { background: var(--good); }
+.pd-done .pd-st, .pd-rested .pd-st { color: var(--good); }
+.pd-partial .pd-mark, .pd-extra .pd-mark { background: var(--warn); }
+.pd-partial .pd-st, .pd-extra .pd-st { color: var(--warn); }
+.pd-missed .pd-mark { background: var(--bad); }
+.pd-missed .pd-st { color: var(--bad); }
+.pd-today .pd-mark { background: var(--accent); }
+.pd-ran { font-variant-numeric: tabular-nums; color: var(--muted); }
+.plan-ended { margin: 0; font-size: 13px; color: var(--muted); }
+.plan-table { max-height: 420px; overflow: auto; margin-top: 6px; }
+.plan-table td.ps-done, .plan-table td.ps-rested { color: var(--good); }
+.plan-table td.ps-missed { color: var(--bad); }
+.plan-table td.ps-partial, .plan-table td.ps-extra { color: var(--warn); }
+#planText { width: 100%; font: 13px/1.5 ui-monospace, "SFMono-Regular", Menlo, monospace; padding: 10px; border-radius: 10px;
+  border: 1px solid var(--axis); background: var(--page); color: var(--ink); resize: vertical; }
+.note-inline { font-weight: 400; color: var(--muted); font-size: 12.5px; margin-left: 6px; }
+@media (max-width: 760px) {
+  .pd-row { grid-template-columns: minmax(0, 1fr); }
+  .pd { grid-template-columns: 64px minmax(0, 1fr) auto; align-items: baseline; border-right: 0; border-bottom: 1px solid var(--grid); padding: 8px 4px; }
+  .pd-today { box-shadow: inset 3px 0 0 var(--accent); padding-left: 10px; }
+  .pd-s { -webkit-line-clamp: 2; }
+}

@@ -15,7 +15,7 @@ import urllib.request
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from . import ai, config, fitness, net, prefs as prefs_mod
+from . import ai, config, fitness, net, plan, prefs as prefs_mod
 from .db import Database
 
 WEBHOOK_RE = re.compile(r"^https://(?:discord\.com|discordapp\.com|ptb\.discord\.com|canary\.discord\.com)"
@@ -114,6 +114,10 @@ def _metrics(db: Database) -> list[tuple[str, str]]:
 def morning(s: config.Settings, db: Database) -> None:
     ins = ai.stored_insight(db)
     lines = []
+    wk = plan.week(db)
+    today_plan = wk["today"]["planned"]
+    if today_plan:
+        lines.append(f"**Plan today:** {today_plan['text']}")
     if ins and ins.get("date") == date.today().isoformat():
         if ins.get("headline"):
             lines.append(f"**{ins['headline']}**")
@@ -122,6 +126,10 @@ def morning(s: config.Settings, db: Database) -> None:
         lines += [f"• {i}" for i in ins.get("insights") or []]
         if ins.get("focus"):
             lines.append(f"**This week:** {ins['focus']}")
+        ch = ins.get("plan_change")
+        if isinstance(ch, dict) and ch.get("state") == "pending":
+            moves = "; ".join(f"{date.fromisoformat(m['date']).strftime('%a')}: {m['session']}" for m in ch["moves"])
+            lines.append(f"**Coach suggests a change:** {moves}. Apply it in the dashboard.")
     else:
         lines.append(LINK_TEXT)
     send(s, "morning", f"Good morning · {date.today().strftime('%A, %b')} {date.today().day}", lines, _metrics(db))

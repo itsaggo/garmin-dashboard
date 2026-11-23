@@ -137,6 +137,33 @@ sent to them, at most about once every 30 minutes. The coach and Discord use the
 same saved forecast. It's a rule of thumb for pacing, not a safety guarantee:
 in serious heat, go by how you feel.
 
+## Training plan
+
+Paste the plan you're following in **Settings → Training plan** (from a coach, a book or a chat), press
+**Preview** to check it was read right, then **Save plan**. It understands:
+
+- lines that start with a date: `Tue Nov 24: Easy 4 mi`, `11/25 - Tempo 5 mi`, `2026-11-26 6 x 800m`;
+- tables with a Date column;
+- tables with one row per week and a column per weekday (give the date week 1 starts if the rows say
+  "Week 1" instead of a date);
+- `Week 1` headings followed by `Mon: Rest`, `Tue: Easy 4 mi` lines. Later weeks count on from the first
+  week that has a date, or from **Week 1 starts on**.
+
+Then:
+
+- **Your runs check days off.** A day is *done* once you've run 85% of its planned distance (or time),
+  *partly done* below that, *missed* if you didn't run, *rested* on a rest day you kept, and *extra run* if
+  you ran on a rest day.
+- **The coach follows the plan.** Its daily insight starts from today's planned session. When your recovery
+  data says so (HRV, resting heart rate, sleep, readiness, training load), it can suggest moving or adjusting
+  sessions in the next 7 days, keeping the long run and key workout in the week, avoiding hard days back to
+  back and keeping the week's distance about the same. The suggestion appears in the coach's box with
+  **Apply** and **Dismiss**; your plan only changes when you press Apply, and **Undo** puts it back.
+- **This week** shows on the dashboard as a strip of planned and completed days, and today's session leads
+  the Discord morning message.
+
+To change the plan, edit the text in Settings and save it again; saving replaces the whole plan.
+
 ## Race recap
 
 The **Recap** tab turns one run into a 14-second animated video:
@@ -424,6 +451,7 @@ app/
   weather.py   Open-Meteo forecast, temperature + dew point heat grade
   ai.py        AI providers (Claude, Gemini, ChatGPT, Ollama), daily insight, caps
   recap.py     race recap: activity file → track, USGS aerial photo, OSM buildings
+  plan.py      training plan: reading pasted plans, check-off, coach suggestions
   notify.py    Discord webhook notifications
   sync.py      official Personal API sync (chunked ranges, backoff, token refresh)
   connect.py   optional Garmin Connect sync (VO2 max, training status, readiness)

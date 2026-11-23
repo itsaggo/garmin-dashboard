@@ -25,6 +25,7 @@ WIDGETS: dict[str, tuple[str, str, int, int]] = {
     "coach": ("AI coach", "main", 8, 8),
     "weather": ("Weather & heat-graded pace", "main", 4, 8),
     "race": ("Goal race", "main", 12, 2),
+    "plan": ("Training plan", "main", 12, 3),
     "vo2": ("VO2 max", "main", 3, 4),
     "readiness": ("Training readiness", "main", 3, 4),
     "sleep": ("Sleep score", "main", 3, 4),
@@ -55,6 +56,9 @@ def complete_layout(items: list[dict] | None) -> list[dict]:
             if i.get("id") == "fitness":
                 i["id"] = "weather"
                 break
+    at = next((n + 1 for n, i in enumerate(items) if i.get("id") == "race"), None)
+    if at is not None and not any(i.get("id") == "plan" for i in items):
+        items.insert(at, {"id": "plan", "section": "main", "w": 12, "h": 3})  # v1.5: the plan goes under the race strip
     items = [i for i in items if i.get("id") in WIDGETS]
     seen = {i["id"] for i in items}
     return items + [i for i in default_layout() if i["id"] not in seen]

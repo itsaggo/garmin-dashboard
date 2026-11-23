@@ -1,7 +1,7 @@
 /* Training dashboard. Plain JS + Chart.js; boxes are placed by GDGrid from your saved layout.
    Every value from the server is escaped (esc) or set with textContent. */
 "use strict";
-const S = { days: 90, status: null, daily: [], training: [], weekly: [], rides: [], acts: [], ov: null, insight: null, weather: null };
+const S = { days: 90, status: null, daily: [], training: [], weekly: [], rides: [], acts: [], ov: null, insight: null, weather: null, plan: null };
 const charts = {};
 const $ = (sel, root = document) => root.querySelector(sel);
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -39,12 +39,12 @@ function applyTheme(t) {
 /* ---------------------------------------------------------------- data */
 async function load() {
   const weeks = Math.max(8, Math.min(52, Math.ceil(S.days / 7)));
-  const [status, daily, training, weekly, rides, acts, ov, insight] = await Promise.all([
+  const [status, daily, training, weekly, rides, acts, ov, insight, plan] = await Promise.all([
     api("/api/status"), api(`/api/daily?days=${S.days}`), api(`/api/training?days=${Math.max(S.days, 60)}`),
     api(`/api/weekly?weeks=${weeks}&type=run`), api(`/api/weekly?weeks=${weeks}&type=ride`),
-    api("/api/activities?limit=20"), api(`/api/overview?days=${S.days}`), api("/api/insight"),
+    api("/api/activities?limit=20"), api(`/api/overview?days=${S.days}`), api("/api/insight"), api("/api/plan/week"),
   ]);
-  Object.assign(S, { status, daily, training, weekly, rides, acts, ov, insight, weeks });
+  Object.assign(S, { status, daily, training, weekly, rides, acts, ov, insight, plan, weeks });
   applyTheme(status.theme);
   renderHeader();
   renderBoards();
@@ -139,6 +139,34 @@ function chart(host, id, config) {
 const labels = (rows) => rows.map((r) => shortDate(r.date));
 
 /* ---------------------------------------------------------------- box helpers */
+/* Training plan: today's session above the coach's note, and the change the coach suggested, if any. */
+const PLAN_STATUS = { done: "Done", partial: "Partly done", missed: "Missed", rested: "Rested", extra: "Extra run", today: "Today", upcoming: "", none: "" };
+function planToday() {
+  const p = S.plan;
+  if (!p || !p.has_plan || p.ended) return "";
+  const t = p.today, e = t.planned;
+  const done = t.status === "done" ? " · done" : t.status === "partial" ? " · partly done" : t.status === "extra" ? " · you ran on a rest day" : "";
+  return `<p class="coach-plan"><span>Plan today</span>${e ? esc(e.text) : "Nothing planned"}${esc(done)}</p>`;
+}
+function planChange(i) {
+  const ch = i && i.plan_change;
+  if (!ch || i.date !== S.insight.today) return "";
+  const day = (iso) => new Date(iso + "T12:00:00").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  const rows = ch.moves.map((m) => `<li><b>${esc(day(m.date))}</b> ${m.was ? `<s>${esc(m.was)}</s> → ` : ""}${esc(m.session)}</li>`).join("");
+  if (ch.state === "pending") return `<div class="coach-change"><div class="eyebrow">Suggested change to your plan</div>
+    ${ch.reason ? `<p>${esc(ch.reason)}</p>` : ""}<ul>${rows}</ul>
+    <div class="row"><button type="button" class="btn sm primary" data-change="apply">Apply</button>
+    <button type="button" class="btn sm" data-change="dismiss">Dismiss</button></div></div>`;
+  if (ch.state === "applied") return `<div class="coach-change done"><p>Change applied to your plan.</p><ul>${rows}</ul>
+    ${S.plan && S.plan.can_undo ? `<button type="button" class="link-btn" data-change="undo">Undo</button>` : ""}</div>`;
+  return "";
+}
+function redraw(id) {
+  for (const body of document.querySelectorAll(`.box-${id} > .box-b`)) {
+    try { W[id].render(body); } catch (e) { body.textContent = "Couldn't draw this box: " + e.message; }
+  }
+}
+
 function emptyState(body, title, text, href, linkText) {
   body.innerHTML = `<div class="empty-state"><strong>${esc(title)}</strong><p>${esc(text)}</p>${href ? `<a class="btn primary" href="${esc(href)}">${esc(linkText)}</a>` : ""}</div>`;
 }
@@ -229,7 +257,7 @@ const W = {
         lead = `<div class="eyebrow">Today's coaching</div><h2 class="coach-head">No insight yet today</h2>
           <p class="coach-today">Your coach writes one each morning after 6 a.m. You can also ask for one now.</p>`;
       }
-      body.innerHTML = `<div class="coach">${lead}
+      body.innerHTML = `<div class="coach">${planToday()}${lead}${planChange(i)}
         <div class="coach-foot">
           <form class="coach-ask" id="coachAsk"><label class="sr-only" for="coachQ">Ask your coach</label>
             <input id="coachQ" maxlength="500" autocomplete="off" placeholder="Ask your coach anything">
@@ -245,6 +273,13 @@ const W = {
         lock(true); $("#coachMsg", body).textContent = "Writing… this can take a moment";
         try { S.insight.insight = (await post("/api/insight/refresh")).insight; W.coach.render(body); }
         catch (err) { $("#coachMsg", body).textContent = err.message; lock(false); }
+      });
+      for (const b of body.querySelectorAll("[data-change]")) b.addEventListener("click", async () => {
+        lock(true); b.disabled = true; $("#coachMsg", body).textContent = "";
+        try {
+          const r = await post("/api/plan/change", { action: b.dataset.change });
+          S.insight.insight = r.insight; S.plan = r.week; W.coach.render(body); redraw("plan");
+        } catch (err) { $("#coachMsg", body).textContent = err.message; lock(false); b.disabled = false; }
       });
       $("#coachAsk", body).addEventListener("submit", async (e) => {
         e.preventDefault();
@@ -308,6 +343,29 @@ const W = {
       o.scales.y.ticks.callback = (v) => mmss(v);
       o.plugins.tooltip.callbacks = { label: (c) => ` ${mmss(c.raw)}` };
       chart(host, "five_k", { type: "line", data: { labels: labels(rows), datasets: [{ label: "5K", ...inkLine(rows.map((r) => r.seconds)) }] }, options: o });
+    },
+  },
+
+  plan: {
+    available: () => S.plan && S.plan.has_plan,
+    render(body) {
+      const p = S.plan, u = U.label();
+      const today = p.today.date;
+      const cells = p.days.map((d) => {
+        const e = d.planned, n = new Date(d.date + "T12:00:00").getDate();
+        const ran = d.ran_m ? `${fmt(U.dist(d.ran_m), 1)} ${u}` : "";
+        const st = PLAN_STATUS[d.status] || "";
+        return `<li class="pd pd-${esc(d.status)}${d.date === today ? " pd-today" : ""}${e ? " pk-" + esc(e.kind) : ""}">
+          <div class="pd-day">${esc(d.weekday)} <span>${n}</span></div>
+          <div class="pd-s">${e ? esc(e.text) : "<span class=\"pd-none\">Nothing planned</span>"}</div>
+          <div class="pd-st">${st ? `<span class="pd-mark"></span>${esc(st)}` : ""}${ran && d.status !== "upcoming" ? ` <span class="pd-ran">${esc(ran)}</span>` : ""}</div></li>`;
+      }).join("");
+      const sub = p.planned_m ? `${fmt(U.dist(p.done_m), 1)} of ${fmt(U.dist(p.planned_m), 1)} ${u} done` : "";
+      body.innerHTML = `<div class="plan-wk">
+        <div class="eyebrow">${joinSub("This week", esc(sub))}<a class="plan-edit" href="/settings#plan">Edit plan</a></div>
+        <ol class="pd-row">${cells}</ol>
+        ${p.ended ? `<p class="plan-ended">Your plan ended on ${esc(longDate(p.last))}. Paste the next block in Settings → Training plan.</p>` : ""}
+      </div>`;
     },
   },
 
@@ -451,7 +509,7 @@ function since() { const d = new Date(); d.setDate(d.getDate() - S.days + 1); re
 
 /* ---------------------------------------------------------------- boards */
 const TITLES = { weather: "Weather", coach: "AI coach", vo2: "VO2 max", readiness: "Training readiness", sleep: "Sleep score",
-  five_k: "5K estimate", race: "Goal race", weekly_run: "Weekly running", weekly_ride: "Weekly cycling",
+  five_k: "5K estimate", race: "Goal race", plan: "Training plan", weekly_run: "Weekly running", weekly_ride: "Weekly cycling",
   rhr: "Resting heart rate", hrv: "HRV", sleep_stages: "Sleep stages", body_battery: "Body Battery", steps: "Steps", stress: "Stress",
   training_load: "Training load", activities: "Recent activities" };
 

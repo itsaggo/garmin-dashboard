@@ -10,7 +10,7 @@ import statistics
 from datetime import date, timedelta
 from typing import Any
 
-from . import prefs as prefs_mod, weather
+from . import plan as plan_mod, prefs as prefs_mod, weather
 from .db import Database
 
 MI = 1.609344
@@ -321,4 +321,7 @@ def facts(db: Database, today: date | None = None) -> dict:
         "goal_race": race_card(db, today),
         "weather_now": weather.summary(db),
     }
+    tp = plan_mod.coach_facts(db, today)
+    if tp:
+        out["training_plan"] = tp
     return out

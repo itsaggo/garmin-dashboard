@@ -65,6 +65,15 @@ CREATE TABLE IF NOT EXISTS sync_log (
     message TEXT
 );
 CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
+CREATE TABLE IF NOT EXISTS plan_days (
+    date       TEXT PRIMARY KEY,
+    text       TEXT NOT NULL,
+    kind       TEXT NOT NULL,
+    dist_lo_m  REAL,
+    dist_hi_m  REAL,
+    minutes    REAL,
+    source     TEXT NOT NULL DEFAULT 'plan'
+);
 CREATE TABLE IF NOT EXISTS recap_cache (
     id         INTEGER NOT NULL,
     kind       TEXT NOT NULL,
@@ -278,6 +287,7 @@ class Database:
         with self.connect() as con:
             con.execute("DELETE FROM meta")
             con.execute("DELETE FROM sessions")
+            con.execute("DELETE FROM plan_days")
         with self.connect() as con:
             con.execute("VACUUM")
 
